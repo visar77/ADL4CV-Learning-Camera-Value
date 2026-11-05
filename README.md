@@ -111,13 +111,14 @@ results/<object-id>/<experiment-id>/results.json
 The renderer must be run through Blender because
 [blender_worker.py](./blender_worker.py) imports `bpy` and `mathutils`.
 
-Configure the executable in [renderer.py](./renderer.py):
+If Blender is available on `PATH`, no configuration is needed. Otherwise,
+configure its executable in [renderer.py](./renderer.py):
 
 ```python
-BLENDER_EXE = "/snap/bin/blender"
+BLENDER_EXE = "/path/to/blender"
 ```
 
-The path can also be replaced with a Blender executable found through `PATH`.
+The default is `None`, which finds Blender through `PATH`.
 
 ### Python
 

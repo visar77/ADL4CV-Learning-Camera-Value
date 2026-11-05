@@ -8,9 +8,9 @@ import argparse
 
 OBJECTS_ROOT = os.path.join(os.path.dirname(__file__), "objects")
 GLB_PATH = os.path.join(OBJECTS_ROOT, "gamecube.glb")
-OUTPUT_ROOT = "/home/niklas/ad4cv/ObjaverseRenderer/views"
+OUTPUT_ROOT = os.path.join(os.path.dirname(__file__), "views")
 HDRI_DIR = os.path.join(os.path.dirname(__file__), "hdris")
-BLENDER_EXE = "/snap/bin/blender"
+BLENDER_EXE = None
 
 OBJECT_ID = None  # None uses the GLB filename
 WORKER = os.path.join(os.path.dirname(__file__), "blender_worker.py")
@@ -62,12 +62,13 @@ def main():
     )
     object_dir = os.path.join(args.output_root, object_id)
     os.makedirs(object_dir, exist_ok=True)
+    config_dir = os.path.abspath(object_dir)
 
     config = {
-        "glb_path": glb_path,
+        "glb_path": os.path.relpath(glb_path, config_dir),
         "object_id": object_id,
-        "object_dir": os.path.abspath(object_dir),
-        "hdri_dir": os.path.abspath(HDRI_DIR),
+        "object_dir": ".",
+        "hdri_dir": os.path.relpath(HDRI_DIR, config_dir),
         "test_count": TEST_COUNT,
         "seed": SEED,
         "image_width": IMAGE_WIDTH,

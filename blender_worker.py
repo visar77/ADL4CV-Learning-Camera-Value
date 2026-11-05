@@ -30,7 +30,9 @@ def safe_name(value):
 def load_config():
     config_path = get_config_path()
     with open(config_path, "r", encoding="utf-8") as file:
-        return json.load(file)
+        config = json.load(file)
+    config["_directory"] = os.path.dirname(os.path.abspath(config_path))
+    return config
 
 
 def import_model(glb_path):
@@ -271,10 +273,11 @@ def main():
     from sampling import fibonacci_lattice
 
     config = load_config()
+    config_dir = config["_directory"]
 
-    glb_path = os.path.abspath(config["glb_path"])
+    glb_path = os.path.abspath(os.path.join(config_dir, config["glb_path"]))
     object_id = safe_name(config["object_id"])
-    object_dir = os.path.abspath(config["object_dir"])
+    object_dir = os.path.abspath(os.path.join(config_dir, config["object_dir"]))
 
     if not os.path.isfile(glb_path):
         raise FileNotFoundError(f"GLB file not found: {glb_path}")
@@ -289,7 +292,7 @@ def main():
     if lighting_mode == "hdri":
         lighting_name = configure_hdri(
             scene,
-            config["hdri_dir"],
+            os.path.abspath(os.path.join(config_dir, config["hdri_dir"])),
             seed=seed,
             strength_min=float(config.get("hdri_strength_min", 0.7)),
             strength_max=float(config.get("hdri_strength_max", 1.3)),
@@ -323,7 +326,7 @@ def main():
 
     metadata = {
         "object_id": object_id,
-        "glb_path": glb_path,
+        "glb_path": os.path.relpath(glb_path, object_dir).replace("\\", "/"),
         "lighting": lighting_name,
         "lattice_size": lattice_size,
     }
