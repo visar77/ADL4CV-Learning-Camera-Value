@@ -12,7 +12,7 @@ def get_config_path():
     if "--" not in sys.argv:
         raise RuntimeError("Expected Blender arguments after '--'.")
 
-    args = sys.argv[sys.argv.index("--") + 1:]
+    args = sys.argv[sys.argv.index("--") + 1 :]
     if "--config" not in args:
         raise RuntimeError("Missing '--config <path>' argument.")
 
@@ -22,8 +22,7 @@ def get_config_path():
 def safe_name(value):
     """Make a string safe to use as a folder name."""
     result = "".join(
-        char if char.isalnum() or char in "-_." else "_"
-        for char in str(value)
+        char if char.isalnum() or char in "-_." else "_" for char in str(value)
     )
     return result.strip("._") or "object"
 
@@ -44,10 +43,7 @@ def import_model(glb_path):
 
     bpy.ops.import_scene.gltf(filepath=glb_path)
 
-    mesh_objects = [
-        obj for obj in bpy.context.scene.objects
-        if obj.type == "MESH"
-    ]
+    mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
     if not mesh_objects:
         raise RuntimeError(f"No mesh objects imported from: {glb_path}")
 
@@ -59,20 +55,25 @@ def import_model(glb_path):
         for corner in obj.bound_box
     ]
 
-    minimum = Vector((
-        min(point.x for point in corners),
-        min(point.y for point in corners),
-        min(point.z for point in corners),
-    ))
-    maximum = Vector((
-        max(point.x for point in corners),
-        max(point.y for point in corners),
-        max(point.z for point in corners),
-    ))
+    minimum = Vector(
+        (
+            min(point.x for point in corners),
+            min(point.y for point in corners),
+            min(point.z for point in corners),
+        )
+    )
+    maximum = Vector(
+        (
+            max(point.x for point in corners),
+            max(point.y for point in corners),
+            max(point.z for point in corners),
+        )
+    )
 
     center = (minimum + maximum) / 2.0
     bounding_radius = max((maximum - minimum).length / 2.0, 0.05)
     return center, bounding_radius
+
 
 def configure_hdri(scene, hdri_dir, seed, strength_min=0.7, strength_max=1.3):
     """Choose and orient one HDRI per object; keep it static across its views."""
@@ -87,9 +88,7 @@ def configure_hdri(scene, hdri_dir, seed, strength_min=0.7, strength_max=1.3):
         if filename.lower().endswith((".hdr", ".exr"))
     )
     if not hdri_files:
-        raise FileNotFoundError(
-            f"No .hdr or .exr files found in: {hdri_dir}"
-        )
+        raise FileNotFoundError(f"No .hdr or .exr files found in: {hdri_dir}")
 
     rng = random.Random(seed)
     hdri_path = rng.choice(hdri_files)
@@ -138,6 +137,7 @@ def configure_hdri(scene, hdri_dir, seed, strength_min=0.7, strength_max=1.3):
     )
     return os.path.basename(hdri_path)
 
+
 def configure_objaverse_area_light(scene, center, model_size):
     """Single large area light, following the Objaverse renderer setup."""
     import bpy
@@ -163,7 +163,6 @@ def configure_objaverse_area_light(scene, center, model_size):
     return "objaverse_area"
 
 
-
 def configure_camera(scene, center, bounding_radius, config):
     """Create a camera and calculate a conservative distance to fit the model."""
     import bpy
@@ -176,16 +175,12 @@ def configure_camera(scene, center, bounding_radius, config):
     horizontal_fov = math.radians(config["horizontal_fov_deg"])
     camera_data.sensor_fit = "HORIZONTAL"
     camera_data.sensor_width = 36.0
-    camera_data.lens = camera_data.sensor_width / (
-        2.0 * math.tan(horizontal_fov / 2.0)
-    )
+    camera_data.lens = camera_data.sensor_width / (2.0 * math.tan(horizontal_fov / 2.0))
     camera_data.clip_start = 0.01
 
     distance_scale = config.get("camera_distance_scale", 1.15)
     distance = (
-        bounding_radius
-        / max(math.sin(horizontal_fov / 2.0), 0.01)
-        * distance_scale
+        bounding_radius / max(math.sin(horizontal_fov / 2.0), 0.01) * distance_scale
     )
     camera_data.clip_end = max(distance + bounding_radius * 10.0, 100.0)
 
@@ -194,6 +189,7 @@ def configure_camera(scene, center, bounding_radius, config):
 
 def configure_render(scene, config):
     import bpy
+
     """Set up Cycles rendering."""
     scene.render.engine = "CYCLES"
     scene.render.resolution_x = int(config["image_width"])
@@ -229,7 +225,6 @@ def configure_render(scene, config):
     scene.view_settings.view_transform = "AgX"
 
 
-
 def render_frame(scene, camera, center, distance, direction, image_path):
     """Render one view and return its camera transform record."""
     import bpy
@@ -238,19 +233,18 @@ def render_frame(scene, camera, center, distance, direction, image_path):
     direction = Vector(direction).normalized()
     camera.location = center + direction * distance
     camera.rotation_euler = (
-        center - camera.location
-    ).to_track_quat("-Z", "Y").to_euler()
+        (center - camera.location).to_track_quat("-Z", "Y").to_euler()
+    )
 
     bpy.context.view_layer.update()
     scene.render.filepath = image_path
     bpy.ops.render.render(write_still=True)
 
     return {
-        # The transforms JSON is written in the same folder as the image.
-        "file_path": os.path.basename(image_path),
+        # FastGS appends ".png" to paths from the transforms file.
+        "file_path": os.path.splitext(os.path.basename(image_path))[0],
         "transform_matrix": [
-            [float(value) for value in row]
-            for row in camera.matrix_world
+            [float(value) for value in row] for row in camera.matrix_world
         ],
     }
 
@@ -274,11 +268,7 @@ def main():
         sys.path.insert(0, worker_dir)
 
     import bpy
-    from sampling import (
-        fibonacci_lattice,
-        select_candidate_index,
-        select_indices,
-    )
+    from sampling import fibonacci_lattice
 
     config = load_config()
 
@@ -290,11 +280,6 @@ def main():
         raise FileNotFoundError(f"GLB file not found: {glb_path}")
 
     os.makedirs(object_dir, exist_ok=True)
-    train_root = os.path.join(object_dir, "train")
-    test_dir = os.path.join(object_dir, "test")
-    os.makedirs(train_root, exist_ok=True)
-    os.makedirs(test_dir, exist_ok=True)
-
     scene = bpy.context.scene
     center, bounding_radius = import_model(glb_path)
 
@@ -329,122 +314,73 @@ def main():
 
     lattice_size = int(config["lattice_size"])
     lattice = fibonacci_lattice(lattice_size)
-    trajectory_elevation = float(
-        config.get("trajectory_elevation_deg", 20.0)
-    )
+    trajectory_elevation = float(config.get("trajectory_elevation_deg", 20.0))
+
+    image_train_dir = os.path.join(object_dir, "images", "train")
+    image_test_dir = os.path.join(object_dir, "images", "test")
+    os.makedirs(image_train_dir, exist_ok=True)
+    os.makedirs(image_test_dir, exist_ok=True)
 
     metadata = {
         "object_id": object_id,
         "glb_path": glb_path,
         "lighting": lighting_name,
         "lattice_size": lattice_size,
-        "experiments": [],
     }
 
-    # Each experiment gets its own folder to avoid filename collisions:
-    # train/fibonacci_008/000.png, train/random_016/000.png, etc.
-    for experiment_number, experiment in enumerate(config["experiments"]):
-        strategy = experiment["strategy"].lower()
-        count = int(experiment["count"])
-        candidate_strategy = (
-            experiment.get("candidate_strategy") or strategy
-        ).lower()
-
-        experiment_tag = safe_name(f"{strategy}_{count:03d}")
-        experiment_dir = os.path.join(train_root, experiment_tag)
-        os.makedirs(experiment_dir, exist_ok=True)
-
-        train_indices = select_indices(
-            strategy=strategy,
-            count=count,
-            lattice=lattice,
-            seed=seed + experiment_number,
-            trajectory_elevation_deg=trajectory_elevation,
-        )
-
-        train_frames = []
-        for image_number, lattice_index in enumerate(train_indices):
-            image_name = f"{image_number:03d}.png"
-            image_path = os.path.join(experiment_dir, image_name)
-
-            train_frames.append(
-                render_frame(
-                    scene,
-                    camera,
-                    center,
-                    distance,
-                    lattice[lattice_index],
-                    image_path,
-                )
-            )
-
-        write_transforms(
-            os.path.join(experiment_dir, "transforms_train.json"),
-            horizontal_fov,
-            train_frames,
-        )
-
-        candidate_index = select_candidate_index(
-            strategy=candidate_strategy,
-            lattice=lattice,
-            training_indices=train_indices,
-            seed=seed + experiment_number + 1,
-            trajectory_elevation_deg=trajectory_elevation,
-        )
-        candidate_path = os.path.join(experiment_dir, "candidate.png")
-        candidate_frame = render_frame(
+    # Render every lattice direction exactly once. Subset manifests below
+    # reference these shared images instead of copying or rerendering them.
+    all_train_frames = []
+    for lattice_index, direction in enumerate(lattice):
+        image_name = f"{lattice_index:03d}.png"
+        image_path = os.path.join(image_train_dir, image_name)
+        frame = render_frame(
             scene,
             camera,
             center,
             distance,
-            lattice[candidate_index],
-            candidate_path,
+            direction,
+            image_path,
         )
-        write_transforms(
-            os.path.join(experiment_dir, "transforms_candidate.json"),
-            horizontal_fov,
-            [candidate_frame],
-        )
+        frame["file_path"] = os.path.join(
+            "images",
+            "train",
+            os.path.splitext(image_name)[0],
+        ).replace("\\", "/")
+        all_train_frames.append(frame)
 
-        metadata["experiments"].append({
-            "folder": os.path.relpath(experiment_dir, object_dir).replace(
-                "\\", "/"
-            ),
-            "strategy": strategy,
-            "view_count": count,
-            "candidate_strategy": candidate_strategy,
-            "candidate_lattice_index": candidate_index,
-        })
+    global_transforms_dir = os.path.join(object_dir, "global_transforms")
+    os.makedirs(global_transforms_dir, exist_ok=True)
+    write_transforms(
+        os.path.join(global_transforms_dir, "transforms_train.json"),
+        horizontal_fov,
+        all_train_frames,
+    )
 
-    # Test views also come from the same Fibonacci lattice, using its
-    # evenly distributed "fibonacci" selection rule.
-    test_directions = [
-        (0.0, 0.0, 1.0),  # above
-        (0.0, 0.0, -1.0),  # below
-        (1.0, 0.0, 0.0),  # +X
-        (-1.0, 0.0, 0.0),  # -X
-        (0.0, 1.0, 0.0),  # +Y
-        (0.0, -1.0, 0.0),  # -Y
-    ]
-
+    test_count = int(config.get("test_count", 8))
+    if test_count < 1:
+        raise ValueError("test_count must be at least 1")
     test_frames = []
-    for image_number, direction in enumerate(test_directions):
+    for image_number, direction in enumerate(fibonacci_lattice(test_count)):
         image_name = f"{image_number:03d}.png"
-        image_path = os.path.join(test_dir, image_name)
-
-        test_frames.append(
-            render_frame(
-                scene,
-                camera,
-                center,
-                distance,
-                direction,
-                image_path,
-            )
+        image_path = os.path.join(image_test_dir, image_name)
+        frame = render_frame(
+            scene,
+            camera,
+            center,
+            distance,
+            direction,
+            image_path,
         )
+        frame["file_path"] = os.path.join(
+            "images",
+            "test",
+            os.path.splitext(image_name)[0],
+        ).replace("\\", "/")
+        test_frames.append(frame)
 
     write_transforms(
-        os.path.join(test_dir, "transforms_test.json"),
+        os.path.join(global_transforms_dir, "transforms_test.json"),
         horizontal_fov,
         test_frames,
     )

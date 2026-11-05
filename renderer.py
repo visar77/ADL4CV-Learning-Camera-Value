@@ -2,34 +2,31 @@ import json
 import os
 import shutil
 import subprocess
+import argparse
 
 # ---------------------------- Settings ----------------------------
 
-GLB_PATH = r"C:\Users\lumi_vi\PycharmProjects\ObjaverseRenderer\objects\gamecube.glb"
-OUTPUT_ROOT = r"C:\Users\lumi_vi\PycharmProjects\ObjaverseRenderer\views"
-HDRI_DIR = r"C:\Users\lumi_vi\PycharmProjects\ObjaverseRenderer\hdris"
-BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
+OBJECTS_ROOT = os.path.join(os.path.dirname(__file__), "objects")
+GLB_PATH = os.path.join(OBJECTS_ROOT, "gamecube.glb")
+OUTPUT_ROOT = "/home/niklas/ad4cv/ObjaverseRenderer/views"
+HDRI_DIR = os.path.join(os.path.dirname(__file__), "hdris")
+BLENDER_EXE = "/snap/bin/blender"
 
 OBJECT_ID = None  # None uses the GLB filename
 WORKER = os.path.join(os.path.dirname(__file__), "blender_worker.py")
-
-EXPERIMENTS = [
-    {"strategy": "furthest", "count": 16, "candidate_strategy": "furthest"},
-    {"strategy": "random", "count": 8, "candidate_strategy": "random"},
-]
 
 TEST_COUNT = 8
 SEED = 77
 IMAGE_WIDTH = 512
 IMAGE_HEIGHT = 512
-LATTICE_SIZE = 200
+LATTICE_SIZE = 100
 HORIZONTAL_FOV_DEG = 50.0
 TRAJECTORY_ELEVATION_DEG = 20.0
-CAMERA_DISTANCE_SCALE = 1.15 # normalized to object dimension
+CAMERA_DISTANCE_SCALE = 1.15  # normalized to object dimension
 LIGHTING_MODE = "area"  # "area" or "hdri"
 
 SAVE_BLEND_FILE = True
-USE_GPU = True  # CPU is the safe default; enable GPU in the worker if configured.
+USE_GPU = False  # CPU is the safe default; enable GPU in the worker if configured.
 
 # ------------------------------------------------------------------
 
@@ -48,22 +45,29 @@ def find_blender():
 
 
 def main():
-    if not os.path.isfile(GLB_PATH):
-        raise FileNotFoundError(f"GLB not found: {GLB_PATH}")
-    if not GLB_PATH.lower().endswith(".glb"):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--glb-path", default=GLB_PATH)
+    parser.add_argument("--object-id")
+    parser.add_argument("--output-root", default=OUTPUT_ROOT)
+    args = parser.parse_args()
+
+    glb_path = os.path.abspath(args.glb_path)
+    if not os.path.isfile(glb_path):
+        raise FileNotFoundError(f"GLB not found: {glb_path}")
+    if not glb_path.lower().endswith(".glb"):
         raise ValueError("GLB_PATH must point to a .glb file.")
 
-
-    object_id = OBJECT_ID or os.path.splitext(os.path.basename(GLB_PATH))[0]
-    object_dir = os.path.join(OUTPUT_ROOT, object_id)
+    object_id = (
+        args.object_id or OBJECT_ID or os.path.splitext(os.path.basename(glb_path))[0]
+    )
+    object_dir = os.path.join(args.output_root, object_id)
     os.makedirs(object_dir, exist_ok=True)
 
     config = {
-        "glb_path": os.path.abspath(GLB_PATH),
+        "glb_path": glb_path,
         "object_id": object_id,
         "object_dir": os.path.abspath(object_dir),
         "hdri_dir": os.path.abspath(HDRI_DIR),
-        "experiments": EXPERIMENTS,
         "test_count": TEST_COUNT,
         "seed": SEED,
         "image_width": IMAGE_WIDTH,
@@ -84,9 +88,11 @@ def main():
     command = [
         find_blender(),
         "--background",
-        "--python", WORKER,
+        "--python",
+        WORKER,
         "--",
-        "--config", config_path,
+        "--config",
+        config_path,
     ]
 
     print("Running:", " ".join(command))
