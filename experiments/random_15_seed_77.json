@@ -1,0 +1,13 @@
+{
+  "id": "random_15_seed_77",
+  "train": {
+    "strategy": "random",
+    "count": 15,
+    "seed": 77
+  },
+  "candidates": {
+    "strategy": "furthest",
+    "count": 4,
+    "seed": 1077
+  }
+}

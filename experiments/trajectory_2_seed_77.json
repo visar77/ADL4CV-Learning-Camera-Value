@@ -1,0 +1,13 @@
+{
+  "id": "trajectory_2_seed_77",
+  "train": {
+    "strategy": "trajectory",
+    "count": 2,
+    "seed": 77
+  },
+  "candidates": {
+    "strategy": "furthest",
+    "count": 4,
+    "seed": 1077
+  }
+}
