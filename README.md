@@ -84,6 +84,7 @@ The supported strategies are currently:
 Every JSON file in `experiments/` is run for every object.
 
 ### 3. Run the orchestrator
+*Note*: You need Blender going forth. See the later section for more info.
 
 From the `ObjaverseRenderer` directory:
 
