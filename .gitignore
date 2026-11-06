@@ -3,3 +3,6 @@ views
 .venv
 .idea
 hdris
+reconstructions
+results
+__pycache__
