@@ -29,6 +29,31 @@ objects/gamecube.glb
 objects/chair.glb
 ```
 
+### Download G-buffer Objaverse objects
+
+The G-buffer Objaverse release is very large, so use the downloader to fetch
+only the source `.glb` files needed for an experiment. It stores one GLB per
+object in `objects/` using its Objaverse name and resumes files that already
+exist:
+
+```bash
+# Select a reproducible random subset
+python3 download_gbuffer_objaverse.py --count 5 --seed 77
+
+# Select one G-buffer object by its ID (or a unique substring)
+python3 download_gbuffer_objaverse.py --object-name 148/753974
+```
+
+Use `--output-dir` for another destination, `--index` to provide a local copy
+of the dataset index, or `--mapping` to provide a local copy of the
+G-buffer-to-GLB mapping. Source GLBs are downloaded from the Objaverse dataset
+on Hugging Face. The downloader streams the relevant metadata shard, extracts
+the name in memory, and does not retain the metadata afterward. For example,
+object `7/48478` is named `Wave Vase` in Objaverse metadata and is written as
+`objects/Wave Vase.glb`, ready for the renderer.
+If multiple selected objects have the same name, their numeric IDs are added
+to the filenames to avoid overwriting files.
+
 ### 2. Configure experiments
 
 Experiment definitions live in:
