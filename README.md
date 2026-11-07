@@ -297,12 +297,63 @@ The train configuration means:
 - `count`: number of training views.
 - `seed`: makes random and furthest-point selection reproducible.
 
-`trajectory` selects views near evenly spaced azimuths at the configured
-elevation. `furthest` performs farthest-point sampling over the sphere.
-`random` samples without replacement.
+`trajectory` samples a seeded ring on the sphere. Its orientation and starting
+phase are randomized from the experiment seed, and its elevation is set by the
+renderer configuration. Targets use a low-discrepancy angular sequence, so
+early views are distributed around the ring while each next target remains
+deterministic. Each target is mapped to the nearest unused lattice point. The
+sequence does not depend on the requested view count: requesting more views
+preserves the earlier views and adds another point on the same ring.
+`furthest` performs farthest-point sampling over the sphere. `random` samples
+without replacement.
 
 Adding an experiment is as simple as adding a JSON file. The orchestrator
 does not require a code change.
+
+## Viewing experiment training views
+
+Use [experiment_viewer.py](./experiment_viewer.py) to display an experiment's
+training cameras on a sphere. The wireframe camera icons are oriented so their
+lenses point toward the sphere's center. Candidate views are not displayed.
+For trajectory experiments, the viewer draws the complete seeded ring as a
+dashed line and places the training cameras at their actual selected lattice
+positions. A blue star marks the first selected camera and a red diamond marks
+the most recently selected camera.
+Add `--show-lattice` to include all Fibonacci lattice points behind the
+highlighted training cameras:
+
+```bash
+python3 experiment_viewer.py \
+    --experiment random_5_seed_77 \
+    --show-lattice
+```
+
+The renderer's fixed test cameras can also be displayed in green with
+`--show-test-views`:
+
+```bash
+python3 experiment_viewer.py \
+    --experiment random_5_seed_77 \
+    --show-test-views
+```
+
+Then run from `ObjaverseRenderer/` with an experiment ID or JSON path. By
+default this renders a PNG without requiring a GUI backend, which works well
+in WSL and remote VS Code sessions:
+
+```bash
+python3 experiment_viewer.py --experiment random_5_seed_77
+```
+
+If an object ID is supplied and its renderer metadata exists, the viewer uses
+that object's lattice size; otherwise it defaults to 100. The lattice size can
+also be set explicitly:
+
+```bash
+python3 experiment_viewer.py \
+    --experiment random_5_seed_77 \
+    --object-id gamecube \
+```
 
 ## Orchestrator workflow
 

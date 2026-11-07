@@ -34,6 +34,14 @@ def make_dataset(object_dir, experiment, lattice):
     global_dir = object_dir / "global_transforms"
     with (global_dir / "transforms_train.json").open(encoding="utf-8") as file:
         global_train = json.load(file)
+    metadata_path = object_dir / "metadata.json"
+    trajectory_elevation = 20.0
+    if metadata_path.is_file():
+        with metadata_path.open(encoding="utf-8") as file:
+            metadata = json.load(file)
+        trajectory_elevation = float(
+            metadata.get("trajectory_elevation_deg", trajectory_elevation)
+        )
 
     train_config = experiment["train"]
     train_indices = select_indices(
@@ -41,6 +49,7 @@ def make_dataset(object_dir, experiment, lattice):
         int(train_config["count"]),
         lattice,
         seed=int(train_config["seed"]),
+        trajectory_elevation_deg=trajectory_elevation,
     )
     frames = []
     for index in train_indices:
