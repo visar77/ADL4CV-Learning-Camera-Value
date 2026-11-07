@@ -360,13 +360,24 @@ def main():
         all_train_frames,
     )
 
-    test_count = int(config.get("test_count", 8))
-    if test_count < 1:
-        raise ValueError("test_count must be at least 1")
+
     test_frames = []
-    for image_number, direction in enumerate(fibonacci_lattice(test_count)):
+    scale = 1.0 / math.sqrt(3.0)
+    test_directions = [
+        (-scale, -scale, -scale),
+        (-scale, -scale, scale),
+        (-scale, scale, -scale),
+        (-scale, scale, scale),
+        (scale, -scale, -scale),
+        (scale, -scale, scale),
+        (scale, scale, -scale),
+        (scale, scale, scale),
+    ] # CUBE GO RAAAAAHHHHHH
+
+    for image_number, direction in enumerate(test_directions):
         image_name = f"{image_number:03d}.png"
         image_path = os.path.join(image_test_dir, image_name)
+
         frame = render_frame(
             scene,
             camera,
@@ -375,11 +386,13 @@ def main():
             direction,
             image_path,
         )
+
         frame["file_path"] = os.path.join(
             "images",
             "test",
             os.path.splitext(image_name)[0],
         ).replace("\\", "/")
+
         test_frames.append(frame)
 
     write_transforms(

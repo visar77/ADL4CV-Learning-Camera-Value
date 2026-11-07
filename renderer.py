@@ -15,7 +15,6 @@ BLENDER_EXE = None
 OBJECT_ID = None  # None uses the GLB filename
 WORKER = os.path.join(os.path.dirname(__file__), "blender_worker.py")
 
-TEST_COUNT = 8
 SEED = 77
 IMAGE_WIDTH = 512
 IMAGE_HEIGHT = 512
@@ -69,7 +68,6 @@ def main():
         "object_id": object_id,
         "object_dir": ".",
         "hdri_dir": os.path.relpath(HDRI_DIR, config_dir),
-        "test_count": TEST_COUNT,
         "seed": SEED,
         "image_width": IMAGE_WIDTH,
         "image_height": IMAGE_HEIGHT,
