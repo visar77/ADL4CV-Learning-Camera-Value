@@ -270,7 +270,7 @@ def main():
         sys.path.insert(0, worker_dir)
 
     import bpy
-    from sampling import fibonacci_lattice
+    from sampling import fibonacci_lattice, test_view_directions
 
     config = load_config()
     config_dir = config["_directory"]
@@ -329,6 +329,7 @@ def main():
         "glb_path": os.path.relpath(glb_path, object_dir).replace("\\", "/"),
         "lighting": lighting_name,
         "lattice_size": lattice_size,
+        "trajectory_elevation_deg": trajectory_elevation,
     }
 
     # Render every lattice direction exactly once. Subset manifests below
@@ -362,19 +363,7 @@ def main():
 
 
     test_frames = []
-    scale = 1.0 / math.sqrt(3.0)
-    test_directions = [
-        (-scale, -scale, -scale),
-        (-scale, -scale, scale),
-        (-scale, scale, -scale),
-        (-scale, scale, scale),
-        (scale, -scale, -scale),
-        (scale, -scale, scale),
-        (scale, scale, -scale),
-        (scale, scale, scale),
-    ] # CUBE GO RAAAAAHHHHHH
-
-    for image_number, direction in enumerate(test_directions):
+    for image_number, direction in enumerate(test_view_directions()):
         image_name = f"{image_number:03d}.png"
         image_path = os.path.join(image_test_dir, image_name)
 

@@ -21,6 +21,21 @@ def fibonacci_lattice(size):
     return points
 
 
+def test_view_directions():
+    """Return the fixed cube-corner camera directions used for test renders."""
+    scale = 1.0 / math.sqrt(3.0)
+    return [
+        (-scale, -scale, -scale),
+        (-scale, -scale, scale),
+        (-scale, scale, -scale),
+        (-scale, scale, scale),
+        (scale, -scale, -scale),
+        (scale, -scale, scale),
+        (scale, scale, -scale),
+        (scale, scale, scale),
+    ]
+
+
 def _distance_squared(a, b):
     return sum((a[k] - b[k]) ** 2 for k in range(3))
 
