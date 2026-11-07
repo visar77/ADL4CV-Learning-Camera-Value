@@ -336,8 +336,8 @@ python3 ../FastGS/train.py \
     --eval \
     --densification_interval 500 \
     --optimizer_type default \
-    --test_iterations 7000 30000 \
-    --save_iterations 7000 30000 \
+    --test_iterations 30000 \
+    --save_iterations 30000 \
     --grad_abs_thresh 0.0012
 ```
 
