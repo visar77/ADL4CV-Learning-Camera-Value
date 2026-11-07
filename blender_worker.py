@@ -208,11 +208,11 @@ def configure_render(scene, config):
     # GPU is optional. CPU remains the fallback if a usable device isn't found.
     if config.get("use_gpu", False):
         preferences = bpy.context.preferences.addons["cycles"].preferences
-        preferences.compute_device_type = "OPTIX"
+        preferences.compute_device_type = "CUDA"
         preferences.refresh_devices()
 
         for device in preferences.devices:
-            device.use = device.type == "OPTIX"
+            device.use = device.type == "CUDA"
             print("Cycles device:", device.name, device.type, device.use)
 
         scene.cycles.device = "GPU"
