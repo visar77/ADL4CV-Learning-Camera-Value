@@ -4,11 +4,8 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-
-import torch
-import torchvision.transforms.functional as tf
-from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 FASTGS_DIR = ROOT.parent / "FastGS"
@@ -52,29 +49,33 @@ def evaluate(reconstruction_dir, result_path, iteration):
             check=True,
         )
 
-        from lpipsPyTorch import lpips
-        from utils.image_utils import psnr
-        from utils.loss_utils import ssim
+        with tempfile.TemporaryDirectory() as temp_dir:
+            metrics_dir = Path(temp_dir)
+            (metrics_dir / "test").symlink_to(
+                (reconstruction_dir / "test").resolve(),
+                target_is_directory=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(FASTGS_DIR / "metrics.py"),
+                    "--model_paths",
+                    str(metrics_dir),
+                ],
+                cwd=FASTGS_DIR,
+                check=True,
+            )
+            with (metrics_dir / "results.json").open(encoding="utf-8") as file:
+                averages = json.load(file)[f"ours_{iteration}"]
+            with (metrics_dir / "per_view.json").open(encoding="utf-8") as file:
+                per_view_by_metric = json.load(file)[f"ours_{iteration}"]
 
-        test_dir = reconstruction_dir / "test" / f"ours_{iteration}"
-        render_dir = test_dir / "renders"
-        ground_truth_dir = test_dir / "gt"
         per_view = {}
-        for render_path in sorted(render_dir.glob("*.png")):
-            gt_path = ground_truth_dir / render_path.name
-            render = tf.to_tensor(Image.open(render_path)).unsqueeze(0)[:, :3].cuda()
-            ground_truth = tf.to_tensor(Image.open(gt_path)).unsqueeze(0)[:, :3].cuda()
-            per_view[render_path.stem] = {
-                "PSNR": float(psnr(render, ground_truth)),
-                "SSIM": float(ssim(render, ground_truth)),
-                "LPIPS": float(lpips(render, ground_truth, net_type="vgg")),
-            }
-
-        averages = {
-            metric: sum(view[metric] for view in per_view.values()) / len(per_view)
-            for metric in ("PSNR", "SSIM", "LPIPS")
-        }
-        result["metrics"] = {"averages": averages, "per_view": per_view}
+        for metric, scores in per_view_by_metric.items():
+            for name, score in scores.items():
+                per_view.setdefault(Path(name).stem, {})[metric] = score
+        metrics = {"averages": averages, "per_view": per_view}
+        result["metrics"] = metrics
         result["metrics_iteration"] = iteration
         with result_path.open("w", encoding="utf-8") as file:
             json.dump(result, file, indent=2)
@@ -84,22 +85,37 @@ def evaluate(reconstruction_dir, result_path, iteration):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--object-id", default="gamecube")
+    parser.add_argument("--object-id")
     parser.add_argument("--experiment-id")
     parser.add_argument("--iteration", type=int, default=30000)
     args = parser.parse_args()
 
-    result_root = ROOT / "results" / args.object_id
-    paths = (
-        [result_root / args.experiment_id / "results.json"]
-        if args.experiment_id
-        else sorted(result_root.glob("*/results.json"))
-    )
+    results_root = ROOT / "results"
+    paths = sorted(results_root.glob("*/*/results.json"))
+    if args.object_id:
+        paths = [path for path in paths if path.parent.parent.name == args.object_id]
+    if args.experiment_id:
+        paths = [path for path in paths if path.parent.name == args.experiment_id]
+
     for result_path in paths:
         with result_path.open(encoding="utf-8") as file:
             result = json.load(file)
+        reconstruction_dir = Path(result["reconstruction_path"])
+        checkpoint = (
+            reconstruction_dir
+            / "point_cloud"
+            / f"iteration_{args.iteration}"
+            / "point_cloud.ply"
+        )
+        if not checkpoint.is_file():
+            print(
+                f"Skipping {result.get('object_id', result_path.parent.parent.name)}"
+                f"/{result.get('experiment_id', result_path.parent.name)}: "
+                f"can't find checkpoint {checkpoint}"
+            )
+            continue
         evaluate(
-            Path(result["reconstruction_path"]),
+            reconstruction_dir,
             result_path,
             args.iteration,
         )

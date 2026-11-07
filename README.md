@@ -116,7 +116,8 @@ After reconstructions are complete:
 python3 evaluate_metrics.py
 ```
 
-Or evaluate one object/experiment:
+By default, this evaluates every experiment result for every object. To limit
+evaluation, pass either or both filters:
 
 ```bash
 python3 evaluate_metrics.py \
@@ -469,7 +470,13 @@ Statuses are:
 the orchestrator. This allows reconstruction to finish first and metrics to
 be run later, possibly on a different GPU allocation.
 
-Run all results for an object:
+Run every object and experiment:
+
+```bash
+python3 evaluate_metrics.py
+```
+
+Run all results for one object:
 
 ```bash
 python3 evaluate_metrics.py --object-id gamecube
