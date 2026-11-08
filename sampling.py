@@ -332,8 +332,8 @@ def select_candidate_indices(
     if strategy == "random":
         return random.Random(seed).sample(available, count)
 
-    # "Next" follows the same count-independent lattice schedule as trajectory
-    # training, continuing after the base experiment's view count.
+    # "Next" continues after trajectory training, but starts at the beginning
+    # of the path for training strategies with no trajectory ordering.
     prefix_count = len(training_indices)
     schedule = select_indices(
         "trajectory",
@@ -351,7 +351,11 @@ def select_candidate_indices(
             "The base training indices do not match the configured trajectory."
         )
 
-    start = prefix_count % len(schedule)
+    is_trajectory_training = (
+        train_strategy is not None
+        and train_strategy.lower() in ("trajectory", "predefined_trajectory")
+    )
+    start = prefix_count % len(schedule) if is_trajectory_training else 0
     ordered_schedule = schedule[start:] + schedule[:start]
     selected = [
         index for index in ordered_schedule if index not in training_indices
