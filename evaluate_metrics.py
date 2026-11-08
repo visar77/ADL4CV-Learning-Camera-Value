@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 FASTGS_DIR = ROOT.parent / "FastGS"
+DEFAULT_ITERATION = 30000
 if str(FASTGS_DIR) not in sys.path:
     sys.path.insert(0, str(FASTGS_DIR))
 
@@ -87,19 +88,58 @@ def load_reconstructions(result):
     }
 
 
+def has_metrics_for_iteration(result, metrics, name, iteration):
+    subset_metrics = metrics.get(name)
+    if not (
+        isinstance(subset_metrics, dict)
+        and "averages" in subset_metrics
+        and "per_view" in subset_metrics
+    ):
+        return False
+
+    metrics_iterations = result.get("metrics_iterations", {})
+    recorded_iteration = metrics_iterations.get(name)
+    if recorded_iteration is None:
+        recorded_iteration = result.get("metrics_iteration")
+    if recorded_iteration is None:
+        recorded_iteration = DEFAULT_ITERATION
+    return recorded_iteration == iteration
+
+
+def save_result(result_path, result):
+    with result_path.open("w", encoding="utf-8") as file:
+        json.dump(result, file, indent=2)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--object-id")
     parser.add_argument("--experiment-id")
-    parser.add_argument("--iteration", type=int, default=30000)
+    parser.add_argument("--iteration", type=int, default=DEFAULT_ITERATION)
+    parser.add_argument("--redo", action="store_true")
     args = parser.parse_args()
 
     results_root = ROOT / "results"
     paths = sorted(results_root.glob("*/*/results.json"))
+    if not paths:
+        print(
+            f"No experiment results found under {results_root}. "
+            "Run orchestrator.py first."
+        )
+        return
+
     if args.object_id:
         paths = [path for path in paths if path.parent.parent.name == args.object_id]
     if args.experiment_id:
         paths = [path for path in paths if path.parent.name == args.experiment_id]
+    if not paths:
+        filters = []
+        if args.object_id:
+            filters.append(f"object ID {args.object_id!r}")
+        if args.experiment_id:
+            filters.append(f"experiment ID {args.experiment_id!r}")
+        print(f"No experiment results match {' and '.join(filters)}.")
+        return
 
     for result_path in paths:
         with result_path.open(encoding="utf-8") as file:
@@ -114,6 +154,16 @@ def main():
         for name, reconstruction in reconstructions.items():
             if name.startswith("redundancy-"):
                 metrics.pop(name, None)
+                continue
+
+            if not args.redo and has_metrics_for_iteration(
+                result, metrics, name, args.iteration
+            ):
+                print(
+                    f"Skipping {result.get('object_id', result_path.parent.parent.name)}"
+                    f"/{result.get('experiment_id', result_path.parent.name)}"
+                    f"/{name}: metrics already complete"
+                )
                 continue
 
             reconstruction_dir = Path(reconstruction["reconstruction_path"])
@@ -137,10 +187,11 @@ def main():
                 reconstruction["train_lattice_indices"],
                 args.iteration,
             )
+            result.setdefault("metrics_iterations", {})[name] = args.iteration
+            result["metrics_iteration"] = args.iteration
+            save_result(result_path, result)
 
-        result["metrics_iteration"] = args.iteration
-        with result_path.open("w", encoding="utf-8") as file:
-            json.dump(result, file, indent=2)
+        save_result(result_path, result)
 
 
 if __name__ == "__main__":
