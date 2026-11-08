@@ -116,13 +116,21 @@ After reconstructions are complete:
 python3 evaluate_metrics.py
 ```
 
-By default, this evaluates every experiment result for every object. To limit
-evaluation, pass either or both filters:
+By default, this evaluates every experiment result that does not already have
+complete metrics for the requested iteration. To limit evaluation, pass either
+or both filters:
 
 ```bash
 python3 evaluate_metrics.py \
     --object-id gamecube \
     --experiment-id furthest_8_seed_77
+```
+
+Experiments with complete metrics for the requested iteration are skipped.
+Pass `--redo` to re-evaluate all matching experiments:
+
+```bash
+python3 evaluate_metrics.py --redo
 ```
 
 Metrics are written into:

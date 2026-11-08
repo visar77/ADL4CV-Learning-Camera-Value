@@ -251,6 +251,7 @@ def main():
                     name: {}
                     for name in ("base", *candidate_runs)
                 },
+                "metrics_iterations": {},
             }
             if result_path.is_file():
                 with result_path.open(encoding="utf-8") as file:
@@ -261,6 +262,19 @@ def main():
                 for name in record["metrics"]:
                     record["metrics"][name] = previous_metrics.get(name, {})
                 record["metrics_iteration"] = previous.get("metrics_iteration")
+                previous_iterations = previous.get("metrics_iterations")
+                if isinstance(previous_iterations, dict):
+                    record["metrics_iterations"].update(previous_iterations)
+                elif previous.get("metrics_iteration") is not None:
+                    record["metrics_iterations"].update(
+                        {
+                            name: previous["metrics_iteration"]
+                            for name, subset_metrics in previous_metrics.items()
+                            if isinstance(subset_metrics, dict)
+                            and "averages" in subset_metrics
+                            and "per_view" in subset_metrics
+                        }
+                    )
 
             try:
                 for name, reconstruction in reconstruction_records.items():
