@@ -5,9 +5,21 @@
     "count": 5,
     "seed": 77
   },
-  "candidates": {
-    "strategy": "furthest",
-    "count": 4,
-    "seed": 1077
-  }
+  "candidates": [
+    {
+      "strategy": "blindspot"
+    },
+    {
+      "strategy": "random",
+      "count": 6
+    },
+    {
+      "strategy": "redundancy",
+      "count": 2
+    },
+    {
+      "strategy": "next",
+      "count": 3
+    }
+  ]
 }

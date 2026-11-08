@@ -7,7 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sampling import fibonacci_lattice, select_indices
+from sampling import (
+    candidate_configurations,
+    fibonacci_lattice,
+    select_candidate_indices,
+    select_indices,
+)
 
 ROOT = Path(__file__).resolve().parent
 EXPERIMENTS_DIR = ROOT / "experiments"
@@ -56,16 +61,51 @@ def make_dataset(object_dir, experiment, lattice):
         frame = dict(global_train["frames"][index])
         frames.append(frame)
 
+    return (
+        train_indices,
+        [frame["file_path"] for frame in frames],
+        trajectory_elevation,
+    )
+
+
+def write_training_manifest(object_dir, global_train, train_indices):
+    frames = [dict(global_train["frames"][index]) for index in train_indices]
     write_manifest(
         object_dir / "transforms_train.json",
         global_train["camera_angle_x"],
         frames,
     )
-    return train_indices, [frame["file_path"] for frame in frames]
 
 
 def reconstruction_complete(path):
     return (path / "point_cloud" / "iteration_30000" / "point_cloud.ply").is_file()
+
+
+def train_reconstruction(fastgs_dir, object_dir, reconstruction_dir):
+    reconstruction_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(fastgs_dir / "train.py"),
+            "--source_path",
+            str(object_dir),
+            "--model_path",
+            str(reconstruction_dir),
+            "--eval",
+            "--densification_interval",
+            "500",
+            "--optimizer_type",
+            "default",
+            "--test_iterations",
+            "30000",
+            "--save_iterations",
+            "30000",
+            "--grad_abs_thresh",
+            "0.0012",
+        ],
+        cwd=fastgs_dir,
+        check=True,
+    )
 
 
 def main():
@@ -121,76 +161,155 @@ def main():
 
         for experiment_path in experiment_files:
             experiment = load_experiment(experiment_path)
-            train_indices, train_image_paths = make_dataset(
-                object_dir,
-                experiment,
-                lattice,
+            train_config = experiment["train"]
+            (
+                train_indices,
+                train_image_paths,
+                trajectory_elevation,
+            ) = make_dataset(object_dir, experiment, lattice)
+            base_reconstruction_dir = (
+                RECONSTRUCTIONS_ROOT / object_id / experiment["id"] / "base"
             )
-            reconstruction_dir = RECONSTRUCTIONS_ROOT / object_id / experiment["id"]
             result_path = RESULTS_ROOT / object_id / experiment["id"] / "results.json"
             result_path.parent.mkdir(parents=True, exist_ok=True)
+
+            reconstruction_records = {
+                "base": {
+                    "reconstruction_path": str(base_reconstruction_dir),
+                    "train_lattice_indices": train_indices,
+                    "train_image_paths": train_image_paths,
+                    "status": (
+                        "complete"
+                        if reconstruction_complete(base_reconstruction_dir)
+                        else "pending"
+                    ),
+                }
+            }
+            candidate_runs = []
+            for strategy, count in candidate_configurations(
+                experiment.get("candidates")
+            ):
+                candidate_indices = select_candidate_indices(
+                    strategy=strategy,
+                    count=count,
+                    lattice=lattice,
+                    training_indices=train_indices,
+                    seed=int(train_config.get("seed", 0)),
+                    train_strategy=train_config["strategy"],
+                    trajectory_elevation_deg=trajectory_elevation,
+                )
+                for index, candidate_index in enumerate(candidate_indices, start=1):
+                    candidate_key = f"{strategy}-{count}-{index}"
+                    candidate_train_indices = (
+                        train_indices
+                        if strategy == "redundancy"
+                        else train_indices + [candidate_index]
+                    )
+                    candidate_path = (
+                        RECONSTRUCTIONS_ROOT
+                        / object_id
+                        / experiment["id"]
+                        / candidate_key
+                    )
+                    if strategy != "redundancy":
+                        candidate_runs.append(candidate_key)
+                    reconstruction_records[candidate_key] = {
+                        "candidate_lattice_index": candidate_index,
+                        "reconstruction_path": (
+                            str(base_reconstruction_dir)
+                            if strategy == "redundancy"
+                            else str(candidate_path)
+                        ),
+                        "train_lattice_indices": candidate_train_indices,
+                        "train_image_paths": [
+                            global_train["frames"][i]["file_path"]
+                            for i in candidate_train_indices
+                        ],
+                        "status": (
+                            "redundant"
+                            if strategy == "redundancy"
+                            else (
+                                "complete"
+                                if reconstruction_complete(candidate_path)
+                                else "pending"
+                            )
+                        ),
+                    }
 
             record = {
                 "object_id": object_id,
                 "experiment_id": experiment["id"],
                 "dataset_path": str(object_dir),
-                "reconstruction_path": str(reconstruction_dir),
+                "reconstruction_path": str(base_reconstruction_dir),
                 "train_lattice_indices": train_indices,
                 "train_image_paths": train_image_paths,
                 "train_manifest": str(object_dir / "transforms_train.json"),
                 "test_manifest": str(object_dir / "transforms_test.json"),
-                "status": (
-                    "complete"
-                    if reconstruction_complete(reconstruction_dir)
-                    else "pending"
-                ),
-                "metrics": {},
+                "reconstructions": reconstruction_records,
+                "status": "pending",
+                "metrics": {
+                    name: {}
+                    for name in ("base", *candidate_runs)
+                },
             }
             if result_path.is_file():
                 with result_path.open(encoding="utf-8") as file:
                     previous = json.load(file)
-                record["metrics"] = previous.get("metrics", {})
+                previous_metrics = previous.get("metrics", {})
+                if "averages" in previous_metrics and "per_view" in previous_metrics:
+                    previous_metrics = {"base": previous_metrics}
+                for name in record["metrics"]:
+                    record["metrics"][name] = previous_metrics.get(name, {})
                 record["metrics_iteration"] = previous.get("metrics_iteration")
-            with result_path.open("w", encoding="utf-8") as file:
-                json.dump(record, file, indent=2)
 
             try:
-                if not args.force_retrain and reconstruction_complete(
-                    reconstruction_dir
-                ):
-                    continue
-                record["status"] = "running"
-                with result_path.open("w", encoding="utf-8") as file:
-                    json.dump(record, file, indent=2)
-                reconstruction_dir.mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    [
-                        sys.executable,
-                        str(args.fastgs_dir / "train.py"),
-                        "--source_path",
-                        str(object_dir),
-                        "--model_path",
-                        str(reconstruction_dir),
-                        "--eval",
-                        "--densification_interval",
-                        "500",
-                        "--optimizer_type",
-                        "default",
-                        "--test_iterations",
-                        "30000",
-                        "--save_iterations",
-                        "30000",
-                        "--grad_abs_thresh",
-                        "0.0012",
-                    ],
-                    cwd=args.fastgs_dir,
-                    check=True,
+                for name, reconstruction in reconstruction_records.items():
+                    if reconstruction["status"] == "redundant":
+                        continue
+                    reconstruction_dir = Path(reconstruction["reconstruction_path"])
+                    if not args.force_retrain and reconstruction_complete(
+                        reconstruction_dir
+                    ):
+                        continue
+
+                    reconstruction["status"] = "running"
+                    record["status"] = "running"
+                    with result_path.open("w", encoding="utf-8") as file:
+                        json.dump(record, file, indent=2)
+
+                    if name == "base":
+                        indices = train_indices
+                    else:
+                        indices = reconstruction["train_lattice_indices"]
+                    write_training_manifest(object_dir, global_train, indices)
+                    try:
+                        train_reconstruction(
+                            args.fastgs_dir,
+                            object_dir,
+                            reconstruction_dir,
+                        )
+                        reconstruction["status"] = "complete"
+                    finally:
+                        (object_dir / "transforms_train.json").unlink(missing_ok=True)
+
+                    with result_path.open("w", encoding="utf-8") as file:
+                        json.dump(record, file, indent=2)
+
+                record["status"] = (
+                    "complete"
+                    if all(
+                        item["status"] in ("complete", "redundant")
+                        for item in reconstruction_records.values()
+                    )
+                    else "pending"
                 )
-                record["status"] = "complete"
                 with result_path.open("w", encoding="utf-8") as file:
                     json.dump(record, file, indent=2)
             except Exception:
                 record["status"] = "failed"
+                for reconstruction in reconstruction_records.values():
+                    if reconstruction["status"] == "running":
+                        reconstruction["status"] = "failed"
                 with result_path.open("w", encoding="utf-8") as file:
                     json.dump(record, file, indent=2)
                 if not args.continue_on_error:

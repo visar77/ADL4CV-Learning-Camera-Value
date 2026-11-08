@@ -25,7 +25,7 @@ CAMERA_DISTANCE_SCALE = 1.15  # normalized to object dimension
 LIGHTING_MODE = "area"  # "area" or "hdri"
 
 SAVE_BLEND_FILE = True
-USE_GPU = False  # CPU is the safe default; enable GPU in the worker if configured.
+USE_GPU = True  # CPU is the safe default; enable GPU in the worker if configured.
 
 # ------------------------------------------------------------------
 

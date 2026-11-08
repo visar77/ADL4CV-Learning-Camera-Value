@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 
 from sampling import (
+    candidate_configurations,
     fibonacci_lattice,
+    select_candidate_indices,
     select_indices,
     test_view_directions,
     trajectory_path,
@@ -107,7 +109,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def draw_camera(axes, position, np, color):
+def draw_camera(axes, position, np, color, stripe_color=None):
     """Draw a small wireframe camera whose lens points toward the sphere center."""
     outward = position / np.linalg.norm(position)
     forward = -outward
@@ -125,15 +127,28 @@ def draw_camera(axes, position, np, color):
             for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1))
         ]
 
-    def draw_loop(vertices):
+    def draw_loop(vertices, line_color, linestyle="-"):
         for index in range(4):
             start, end = vertices[index], vertices[(index + 1) % 4]
             axes.plot(
                 (start[0], end[0]),
                 (start[1], end[1]),
                 (start[2], end[2]),
-                color=color,
+                color=line_color,
                 linewidth=1.6,
+                linestyle=linestyle,
+            )
+
+    def draw_connectors(rear, front, line_color, linestyle="-"):
+        for index in range(4):
+            start, end = rear[index], front[index]
+            axes.plot(
+                (start[0], end[0]),
+                (start[1], end[1]),
+                (start[2], end[2]),
+                color=line_color,
+                linewidth=1.6,
+                linestyle=linestyle,
             )
 
     body_back = rectangle(-0.10, 0.055, 0.045)
@@ -141,20 +156,16 @@ def draw_camera(axes, position, np, color):
     lens_base = rectangle(-0.02, 0.032, 0.027)
     lens_front = rectangle(0.065, 0.015, 0.013)
 
-    draw_loop(body_back)
-    draw_loop(body_front)
-    draw_loop(lens_base)
-    draw_loop(lens_front)
-    for index in range(4):
+    for vertices in (body_back, body_front, lens_base, lens_front):
+        draw_loop(vertices, color)
+    for rear, front in ((body_back, body_front), (lens_base, lens_front)):
+        draw_connectors(rear, front, color)
+    if stripe_color is not None:
+        stripe_style = (0, (3, 3))
+        for vertices in (body_back, body_front, lens_base, lens_front):
+            draw_loop(vertices, stripe_color, stripe_style)
         for rear, front in ((body_back, body_front), (lens_base, lens_front)):
-            start, end = rear[index], front[index]
-            axes.plot(
-                (start[0], end[0]),
-                (start[1], end[1]),
-                (start[2], end[2]),
-                color=color,
-                linewidth=1.6,
-            )
+            draw_connectors(rear, front, stripe_color, stripe_style)
 
 
 def main():
@@ -171,6 +182,29 @@ def main():
         seed=int(train.get("seed", 0)),
         trajectory_elevation_deg=trajectory_elevation,
     )
+    candidate_labels = {"random": "R", "blindspot": "B", "next": "N"}
+    candidate_points = {}
+    redundancy_indices = set()
+    configurations = candidate_configurations(experiment.get("candidates"))
+    has_next_candidates = any(strategy == "next" for strategy, _ in configurations)
+    for strategy, count in configurations:
+        indices = select_candidate_indices(
+            strategy=strategy,
+            count=count,
+            lattice=lattice,
+            training_indices=train_indices,
+            seed=int(train.get("seed", 0)),
+            train_strategy=train["strategy"],
+            trajectory_elevation_deg=trajectory_elevation,
+        )
+        if strategy == "redundancy":
+            redundancy_indices.update(indices)
+        else:
+            for candidate_number, index in enumerate(indices, start=1):
+                label = candidate_labels[strategy]
+                if strategy in ("random", "next"):
+                    label += str(candidate_number)
+                candidate_points.setdefault(index, set()).add(label)
     is_trajectory = train["strategy"].lower() in (
         "trajectory",
         "predefined_trajectory",
@@ -215,7 +249,7 @@ def main():
             label=f"Fibonacci lattice ({lattice_size})",
         )
 
-    if is_trajectory:
+    if is_trajectory or has_next_candidates:
         full_path = np.asarray(
             trajectory_path(
                 720,
@@ -227,11 +261,24 @@ def main():
             full_path[:, 0],
             full_path[:, 1],
             full_path[:, 2],
-            color="#596b75",
+            color=(
+                "#d4a017"
+                if has_next_candidates and not is_trajectory
+                else "#596b75"
+            ),
             linewidth=1.5,
-            linestyle="--",
-            label="Randomized trajectory ring",
+            linestyle=(
+                (0, (5, 3))
+                if has_next_candidates and not is_trajectory
+                else "--"
+            ),
+            label=(
+                "Next-candidate trajectory"
+                if has_next_candidates and not is_trajectory
+                else "Randomized trajectory ring"
+            ),
         )
+    if is_trajectory:
         current_points = lattice_points[train_indices]
         axes.scatter(
             *current_points[0],
@@ -255,10 +302,29 @@ def main():
         )
 
     points = lattice_points[train_indices]
-    for point in points:
-        draw_camera(axes, point, np, "#d1495b")
+    for index, point in zip(train_indices, points):
+        draw_camera(
+            axes,
+            point,
+            np,
+            "#d1495b",
+            stripe_color="#d4a017" if index in redundancy_indices else None,
+        )
     for index, (x, y, z) in zip(train_indices, points):
         axes.text(x * 1.17, y * 1.17, z * 1.17, f"{index:03d}", fontsize=8)
+
+    for index, labels in sorted(candidate_points.items()):
+        x, y, z = lattice_points[index]
+        draw_camera(axes, lattice_points[index], np, "#d4a017")
+        axes.text(
+            x * 1.25,
+            y * 1.25,
+            z * 1.25,
+            "/".join(sorted(labels)),
+            color="#b8860b",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     if args.show_test_views:
         test_points = np.asarray(test_view_directions())
@@ -276,6 +342,43 @@ def main():
             label=f"Training cameras ({len(train_indices)}; lenses point inward)",
         ),
     ]
+    for strategy, description in (
+        ("random", "Random"),
+        ("blindspot", "Blindspot"),
+        ("next", "Next"),
+    ):
+        labels = sorted(
+            {
+                label
+                for candidate_labels_at_point in candidate_points.values()
+                for label in candidate_labels_at_point
+                if label.startswith(candidate_labels[strategy])
+            }
+        )
+        if labels:
+            letter = candidate_labels[strategy]
+            legend_handles.append(
+                Line2D(
+                    [],
+                    [],
+                    marker=f"${letter}$",
+                    linestyle="None",
+                    color="#d4a017",
+                    markersize=12,
+                    label=f"{letter} - {description} candidate",
+                )
+            )
+    if redundancy_indices:
+        legend_handles.append(
+            Line2D(
+                [],
+                [],
+                color="#d1495b",
+                linewidth=2,
+                linestyle=(0, (3, 3)),
+                label="Redundancy candidate (gold stripes)",
+            )
+        )
     if args.show_lattice:
         legend_handles.insert(
             0,
@@ -298,17 +401,30 @@ def main():
                 label="Fixed test cameras (8)",
             )
         )
-    if is_trajectory:
+    if is_trajectory or (has_next_candidates and not is_trajectory):
         legend_handles.append(
             Line2D(
                 [],
                 [],
-                color="#596b75",
+                color=(
+                    "#d4a017"
+                    if has_next_candidates and not is_trajectory
+                    else "#596b75"
+                ),
                 linewidth=1.5,
-                linestyle="--",
-                label="Randomized trajectory ring",
+                linestyle=(
+                    (0, (5, 3))
+                    if has_next_candidates and not is_trajectory
+                    else "--"
+                ),
+                label=(
+                    "Next-candidate trajectory"
+                    if has_next_candidates and not is_trajectory
+                    else "Randomized trajectory ring"
+                ),
             )
         )
+    if is_trajectory:
         legend_handles.extend(
             (
                 Line2D(
@@ -342,7 +458,11 @@ def main():
         title=(
             f"{experiment['id']} - camera views"
             if args.show_test_views
-            else f"{experiment['id']} - training camera views"
+            else (
+                f"{experiment['id']} - training and candidate views"
+                if candidate_points or redundancy_indices
+                else f"{experiment['id']} - training camera views"
+            )
         ),
     )
     axes.set_box_aspect((1, 1, 1))

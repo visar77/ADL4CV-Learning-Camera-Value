@@ -13,15 +13,12 @@ if str(FASTGS_DIR) not in sys.path:
     sys.path.insert(0, str(FASTGS_DIR))
 
 
-def evaluate(reconstruction_dir, result_path, iteration):
-    with result_path.open(encoding="utf-8") as file:
-        result = json.load(file)
-    dataset_dir = Path(result["dataset_path"])
+def evaluate_reconstruction(reconstruction_dir, dataset_dir, train_indices, iteration):
     global_manifest = dataset_dir / "global_transforms" / "transforms_train.json"
     with global_manifest.open(encoding="utf-8") as file:
         global_train = json.load(file)
     train_frames = [
-        global_train["frames"][index] for index in result["train_lattice_indices"]
+        global_train["frames"][index] for index in train_indices
     ]
     train_manifest = dataset_dir / "transforms_train.json"
     with train_manifest.open("w", encoding="utf-8") as file:
@@ -74,13 +71,20 @@ def evaluate(reconstruction_dir, result_path, iteration):
         for metric, scores in per_view_by_metric.items():
             for name, score in scores.items():
                 per_view.setdefault(Path(name).stem, {})[metric] = score
-        metrics = {"averages": averages, "per_view": per_view}
-        result["metrics"] = metrics
-        result["metrics_iteration"] = iteration
-        with result_path.open("w", encoding="utf-8") as file:
-            json.dump(result, file, indent=2)
+        return {"averages": averages, "per_view": per_view}
     finally:
         train_manifest.unlink(missing_ok=True)
+
+
+def load_reconstructions(result):
+    if "reconstructions" in result:
+        return result["reconstructions"]
+    return {
+        "base": {
+            "reconstruction_path": result["reconstruction_path"],
+            "train_lattice_indices": result["train_lattice_indices"],
+        }
+    }
 
 
 def main():
@@ -100,25 +104,43 @@ def main():
     for result_path in paths:
         with result_path.open(encoding="utf-8") as file:
             result = json.load(file)
-        reconstruction_dir = Path(result["reconstruction_path"])
-        checkpoint = (
-            reconstruction_dir
-            / "point_cloud"
-            / f"iteration_{args.iteration}"
-            / "point_cloud.ply"
-        )
-        if not checkpoint.is_file():
-            print(
-                f"Skipping {result.get('object_id', result_path.parent.parent.name)}"
-                f"/{result.get('experiment_id', result_path.parent.name)}: "
-                f"can't find checkpoint {checkpoint}"
+        dataset_dir = Path(result["dataset_path"])
+        reconstructions = load_reconstructions(result)
+        metrics = result.setdefault("metrics", {})
+        if "averages" in metrics and "per_view" in metrics:
+            metrics = {"base": metrics}
+            result["metrics"] = metrics
+
+        for name, reconstruction in reconstructions.items():
+            if name.startswith("redundancy-"):
+                metrics.pop(name, None)
+                continue
+
+            reconstruction_dir = Path(reconstruction["reconstruction_path"])
+            checkpoint = (
+                reconstruction_dir
+                / "point_cloud"
+                / f"iteration_{args.iteration}"
+                / "point_cloud.ply"
             )
-            continue
-        evaluate(
-            reconstruction_dir,
-            result_path,
-            args.iteration,
-        )
+            if not checkpoint.is_file():
+                print(
+                    f"Skipping {result.get('object_id', result_path.parent.parent.name)}"
+                    f"/{result.get('experiment_id', result_path.parent.name)}"
+                    f"/{name}: can't find checkpoint {checkpoint}"
+                )
+                continue
+
+            metrics[name] = evaluate_reconstruction(
+                reconstruction_dir,
+                dataset_dir,
+                reconstruction["train_lattice_indices"],
+                args.iteration,
+            )
+
+        result["metrics_iteration"] = args.iteration
+        with result_path.open("w", encoding="utf-8") as file:
+            json.dump(result, file, indent=2)
 
 
 if __name__ == "__main__":
