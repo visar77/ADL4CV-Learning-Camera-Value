@@ -248,8 +248,7 @@ def main():
                 "reconstructions": reconstruction_records,
                 "status": "pending",
                 "metrics": {
-                    name: {}
-                    for name in ("base", *candidate_runs)
+                    name: {} for name in reconstruction_records
                 },
                 "metrics_iterations": {},
             }

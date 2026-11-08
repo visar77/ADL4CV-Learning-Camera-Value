@@ -1,6 +1,7 @@
 """Render FastGS test views and store per-view metrics in results.json."""
 
 import argparse
+import copy
 import json
 import subprocess
 import sys
@@ -106,6 +107,21 @@ def has_metrics_for_iteration(result, metrics, name, iteration):
     return recorded_iteration == iteration
 
 
+def copy_redundancy_metrics(result, metrics, reconstructions, iteration):
+    redundancy_names = [
+        name for name in reconstructions if name.startswith("redundancy-")
+    ]
+    if not has_metrics_for_iteration(result, metrics, "base", iteration):
+        for name in redundancy_names:
+            metrics.pop(name, None)
+            result.get("metrics_iterations", {}).pop(name, None)
+        return
+
+    for name in redundancy_names:
+        metrics[name] = copy.deepcopy(metrics["base"])
+        result.setdefault("metrics_iterations", {})[name] = iteration
+
+
 def save_result(result_path, result):
     with result_path.open("w", encoding="utf-8") as file:
         json.dump(result, file, indent=2)
@@ -153,7 +169,6 @@ def main():
 
         for name, reconstruction in reconstructions.items():
             if name.startswith("redundancy-"):
-                metrics.pop(name, None)
                 continue
 
             if not args.redo and has_metrics_for_iteration(
@@ -191,6 +206,7 @@ def main():
             result["metrics_iteration"] = args.iteration
             save_result(result_path, result)
 
+        copy_redundancy_metrics(result, metrics, reconstructions, args.iteration)
         save_result(result_path, result)
 
 
