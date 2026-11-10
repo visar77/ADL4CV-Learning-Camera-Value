@@ -10,7 +10,113 @@ The model receives the existing context RGB views and their poses plus the
 candidate pose. Candidate RGB is never used because it is unavailable at
 decision time.
 
-## Workflow
+## Model architecture
+
+The LVSM model uses the following inputs to predict one normalized scalar:
+
+```mermaid
+flowchart LR
+    I["Context RGB views<br/>[B, N, 3, H, W]"]
+    P["Context poses<br/>[B, N, P]"]
+    C["Candidate pose<br/>[B, P]"]
+    M["Valid-view mask<br/>[B, N]"]
+
+    subgraph LVSM["LVSM model (train.py --model lvsm)"]
+        Prep["Model-side RGB scaling<br/>and resizing"]
+        Backbone["Frozen LVSM<br/>context/query backbone"]
+        Head["Trainable regression head"]
+        Prep --> Backbone --> Head
+    end
+
+    Out["Predicted relative PSNR gain"]
+    I --> Prep
+    P --> Backbone
+    C --> Backbone
+    M --> Backbone
+    Head --> Out
+```
+
+The candidate image is intentionally absent from both paths: prediction must
+be possible before the candidate view is captured. During training, the
+regression head learns from the ground-truth relative gain in the JSONL
+manifest.
+
+The valid-view mask identifies real context views versus padding when samples
+contain different numbers of views. Images are batched as
+`[batch, max_views, 3, H, W]`, with a corresponding mask shaped
+`[batch, max_views]`; for example, `[1, 1, 1, 0, 0]` means that only the first
+three views are real. The model uses this mask so padded slots do not affect
+the pooled context representation.
+
+## Repository structure
+
+The project expects renderer outputs and view data under `data/`. Processed
+JSONL manifests are generated once and then consumed by training and
+evaluation:
+
+```text
+Reconstruction-Gain-Predictor/
+├── data/
+│   ├── results/
+│   │   └── <scene>/results.json
+│   ├── views/
+│   │   └── <scene>/
+│   │       ├── global_transforms/transforms_train.json
+│   │       └── train/*.png or *.jpg
+│   ├── processed/*.jsonl
+│   └── splits/*.json                 # optional
+├── preprocess.py
+├── train.py
+├── debug_train.py
+├── inference.py
+├── evaluate.py
+├── model.py
+├── dataset.py
+├── tests/
+├── runs/<model>/<timestamp>/
+├── checkpoints/<model>/<timestamp>/
+└── README.md
+```
+
+Each scene must have matching directories under `data/results/<scene>/` and
+`data/views/<scene>/`. The results provide the base/candidate metrics, while
+the views provide the camera transforms and referenced RGB images. The
+`preprocess.py` command combines them into a manifest under
+`data/processed/`; training does not require reconstruction assets.
+
+## Training workflow
+
+```mermaid
+flowchart TD
+    Results["Renderer metrics<br/>data/results/<scene>/"]
+    Views["RGB views and poses<br/>data/views/<scene>/"]
+    Preprocess["preprocess.py"]
+    JSONL["Transparent JSONL manifest<br/>data/processed/*.jsonl"]
+    Select["Optional deterministic<br/>--num-samples subset"]
+    Split["Scene-disjoint<br/>train / validation / test split"]
+    Load["Runtime RGB loading,<br/>padding, and masks"]
+    LVSM["Frozen LVSM +<br/>trainable gain head<br/>train.py"]
+    Loss["Normalized MSE<br/>relative PSNR gain"]
+    Optimize["AdamW updates<br/>trainable parameters"]
+    Evaluate["Validation and test<br/>loss after each epoch"]
+    Save["Best checkpoint<br/>checkpoints/<model>/<timestamp>/"]
+    Logs["TensorBoard scalars<br/>runs/<model>/<timestamp>/"]
+
+    Results --> Preprocess
+    Views --> Preprocess
+    Preprocess --> JSONL --> Select --> Split --> Load --> LVSM --> Loss
+    Loss --> Optimize --> LVSM
+    Loss --> Evaluate
+    Evaluate --> Save
+    Evaluate --> Logs
+```
+
+The same JSONL manifest can contain multiple scenes. Splitting happens at the
+scene level to prevent records from one object appearing in both training and
+evaluation. A one-scene run is useful for a pipeline or overfitting smoke test,
+but is not a generalization measurement.
+
+## Usage workflow
 
 ### 1. Preprocess once
 
@@ -54,10 +160,9 @@ normal training, but forces CPU, the small CNN, and batch size one:
 ```
 
 Both `train.py` and `debug_train.py` accept `--num-samples N`. Records are
-selected deterministically from the beginning of the JSONL dataset, so
-`--num-samples 1`, `--num-samples 10`, and so on are reproducible subsets.
-The option applies before the scene split and is recorded in checkpoint
-metadata.
+selected deterministically in round-robin order across scenes, so a subset
+does not accidentally contain only the first object's records. The option
+applies before the scene split and is recorded in checkpoint metadata.
 
 ### 3. Train the real model
 
@@ -75,6 +180,25 @@ Adding more objects under `data/results/<scene>/` and `data/views/<scene>/`
 works with the preprocessing step as long as each scene has matching
 `results.json` records and `transforms_train.json` plus referenced train
 images. Re-run preprocessing after adding objects.
+
+With multiple scenes, training creates scene-disjoint train, validation, and
+test splits. The default fractions are 60/20/20; override them with
+`--validation-fraction` and `--test-fraction`, or provide a JSON split file:
+
+```json
+{"train": ["Table", "Chair"], "validation": ["Lamp"], "test": ["Car"]}
+```
+
+```bash
+../.venv/bin/python train.py --dataset data/processed/all.jsonl \
+  --split-file data/splits/all.json \
+  --lvsm-checkpoint checkpoints/lvsm/lvsm-module.pt
+```
+
+Training uses an inverse-frequency sampler so scenes with fewer candidate
+records are not drowned out by scenes with many experiments. A one-scene
+smoke test reuses that scene for all three reports and should not be treated
+as a generalization result.
 
 However, `train.py` is not automatically plug-and-play with an arbitrary
 LVSM download. The current adapter expects the downloaded checkpoint to be a
@@ -104,6 +228,17 @@ There is one inference entry point:
 Use `--scene-id`, `--experiment-id`, and `--candidate-id` to filter before
 selecting `--sample-index`. The script prints ground-truth and predicted
 relative gain and the corresponding candidate PSNR values.
+
+Evaluate a checkpoint without training:
+
+```bash
+../.venv/bin/python evaluate.py \
+  --checkpoint checkpoints/psnr_toy_debug/<timestamp>/model.pt \
+  --dataset data/processed/all.jsonl \
+  --split test
+```
+
+For an LVSM checkpoint, also pass `--lvsm-checkpoint`.
 
 ## Outputs and monitoring
 
