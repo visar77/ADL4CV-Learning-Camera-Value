@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from dataset import GainDataset, collate_gain_samples, load_manifest
+from dataset import GainDataset, collate_gain_samples, load_manifest, sample_key
 from model import ContextPoseCNN, LVSMGainPredictor
 from train import _split
 
@@ -30,10 +30,10 @@ def main() -> None:
     checkpoint = torch.load(
         args.checkpoint, map_location=args.device, weights_only=True
     )
-    image_size = int(checkpoint.get("image_size", 128))
+    image_size = int(checkpoint.get("image_size", 512))
     model_type = checkpoint.get("model_type")
     if model_type == "toy":
-        model = ContextPoseCNN(image_size=image_size)
+        model = ContextPoseCNN(image_size=int(checkpoint.get("image_size", 32)))
     elif model_type == "lvsm":
         if args.lvsm_checkpoint is None:
             raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
@@ -43,6 +43,15 @@ def main() -> None:
     model.load_state_dict(checkpoint["model"])
     model.to(args.device).eval()
     samples = load_manifest(args.dataset)
+    if checkpoint.get("sample_ids") is not None:
+        selected_ids = set(checkpoint["sample_ids"])
+        samples = [sample for sample in samples if sample_key(sample) in selected_ids]
+        if len(samples) != len(selected_ids):
+            raise ValueError(
+                "The dataset does not contain every sample used by the checkpoint."
+            )
+    if not samples:
+        raise ValueError("The dataset contains no samples used by the checkpoint.")
     stored = checkpoint.get("split")
     if stored:
         assignments = {

@@ -16,6 +16,7 @@ from torch.nn.functional import interpolate
 from torch.utils.data import Dataset
 
 POSE_DIM = 16
+DEFAULT_IMAGE_SIZE = 512
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,10 @@ class GainSample:
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def sample_key(sample: GainSample) -> str:
+    return f"{sample.scene_id}\x1f{sample.experiment_id}\x1f{sample.candidate_id}"
 
 
 def _frames(path: Path) -> dict[int, tuple[str, tuple[float, ...]]]:
@@ -191,7 +196,9 @@ def load_manifest(path: Path) -> list[GainSample]:
 
 
 class GainDataset(Dataset[GainSample]):
-    def __init__(self, samples: list[GainSample], image_size: int = 128) -> None:
+    def __init__(
+        self, samples: list[GainSample], image_size: int = DEFAULT_IMAGE_SIZE
+    ) -> None:
         self.samples = samples
         self.image_size = image_size
 
@@ -220,7 +227,7 @@ def preprocess_samples(
     views_root: Path,
     output: Path,
     *,
-    image_size: int = 128,
+    image_size: int = DEFAULT_IMAGE_SIZE,
     limit: int | None = None,
 ) -> list[GainSample]:
     """Write transparent JSONL records; images remain ordinary RGB files."""
@@ -286,7 +293,7 @@ def collate_processed_samples(
 
 
 def collate_gain_samples(
-    samples: list[GainSample], image_size: int = 128
+    samples: list[GainSample], image_size: int = DEFAULT_IMAGE_SIZE
 ) -> dict[str, Tensor | list[GainSample]]:
     del image_size
     return collate_processed_samples(samples)

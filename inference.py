@@ -36,12 +36,12 @@ def predict(args: argparse.Namespace) -> None:
     )
     model_type = checkpoint.get("model_type")
     if model_type == "toy":
-        model = ContextPoseCNN(image_size=int(checkpoint.get("image_size", 128)))
+        model = ContextPoseCNN(image_size=int(checkpoint.get("image_size", 32)))
     elif model_type == "lvsm":
         if args.lvsm_checkpoint is None:
             raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
         model = LVSMGainPredictor(
-            args.lvsm_checkpoint, image_size=int(checkpoint.get("image_size", 128))
+            args.lvsm_checkpoint, image_size=int(checkpoint.get("image_size", 512))
         )
     else:
         raise ValueError(f"Unsupported checkpoint model_type={model_type!r}")
@@ -51,7 +51,10 @@ def predict(args: argparse.Namespace) -> None:
     sample = _select(
         samples, args.sample_index, args.scene_id, args.experiment_id, args.candidate_id
     )
-    batch = collate_gain_samples([sample], int(checkpoint.get("image_size", 128)))
+    default_image_size = 32 if model_type == "toy" else 512
+    batch = collate_gain_samples(
+        [sample], int(checkpoint.get("image_size", default_image_size))
+    )
     with torch.no_grad():
         normalized = model(
             batch["images"].to(args.device),
@@ -63,7 +66,7 @@ def predict(args: argparse.Namespace) -> None:
         checkpoint["target_mean"]
     )
     predicted_psnr = sample.base_psnr * (1.0 + prediction)
-    print(f"model image size:       {checkpoint.get('image_size', 128)}")
+    print(f"model image size:       {checkpoint.get('image_size', default_image_size)}")
     print(f"scene:                  {sample.scene_id}")
     print(f"experiment/candidate:   {sample.experiment_id}/{sample.candidate_id}")
     print(f"context views:          {len(sample.context_image_paths)}")

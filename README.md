@@ -82,7 +82,9 @@ Each scene must have matching directories under `data/results/<scene>/` and
 `data/views/<scene>/`. The results provide the base/candidate metrics, while
 the views provide the camera transforms and referenced RGB images. The
 `preprocess.py` command combines them into a manifest under
-`data/processed/`; training does not require reconstruction assets.
+`data/processed/`; training does not require reconstruction assets. The
+manifest keeps the original RGB files; the production LVSM path prepares them
+at 512x512 at model input time. Preprocessing does not resize or rewrite images.
 
 ## Training workflow
 
@@ -238,7 +240,19 @@ Evaluate a checkpoint without training:
   --split test
 ```
 
-For an LVSM checkpoint, also pass `--lvsm-checkpoint`.
+For an LVSM checkpoint, also pass `--lvsm-checkpoint`. A checkpoint records
+the exact selected sample IDs, so evaluation uses the same subset even when
+the supplied manifest contains additional records. Older checkpoints without
+sample IDs are evaluated on all matching scenes in the manifest.
+
+Training supports standard optimization controls:
+
+- `--scheduler plateau` (default) reduces the learning rate when validation
+  loss stops improving; `--scheduler cosine` is also available.
+- `--early-stopping-patience 10` (default) stops after that many consecutive
+  non-improving validation epochs.
+- Set `--scheduler none` or `--early-stopping-patience 0` only if you
+  explicitly want to disable these controls.
 
 ## Outputs and monitoring
 

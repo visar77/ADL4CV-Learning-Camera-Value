@@ -15,18 +15,14 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=Path("data/processed/psnr.jsonl")
     )
-    parser.add_argument("--image-size", type=int, default=128)
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
-    if args.image_size < 1:
-        parser.error("--image-size must be positive")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be positive")
     samples = preprocess_samples(
         args.results_root,
         args.views_root,
         args.output,
-        image_size=args.image_size,
         limit=args.limit,
     )
     print(f"Saved {len(samples)} samples to {args.output}")

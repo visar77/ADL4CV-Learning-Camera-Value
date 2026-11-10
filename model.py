@@ -14,6 +14,8 @@ import torch
 from torch import Tensor, nn
 from torch.nn.functional import interpolate
 
+DEFAULT_IMAGE_SIZE = 512
+
 
 def prepare_images(images: Tensor, image_size: int) -> Tensor:
     """Convert RGB tensors from uint8/0..255 into normalized model input."""
@@ -113,7 +115,7 @@ class ContextPoseCNN(nn.Module):
     """
 
     def __init__(
-        self, pose_dim: int = 16, context_dim: int = 64, image_size: int = 128
+        self, pose_dim: int = 16, context_dim: int = 64, image_size: int = 32
     ) -> None:
         super().__init__()
         self.image_size = image_size
@@ -173,7 +175,10 @@ class LVSMGainPredictor(nn.Module):
     """
 
     def __init__(
-        self, checkpoint: Path, feature_dim: int = 128, image_size: int = 128
+        self,
+        checkpoint: Path,
+        feature_dim: int = 128,
+        image_size: int = DEFAULT_IMAGE_SIZE,
     ) -> None:
         super().__init__()
         self.image_size = image_size

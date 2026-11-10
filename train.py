@@ -13,7 +13,14 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from dataset import GainDataset, GainSample, collate_gain_samples, load_manifest
+from dataset import (
+    DEFAULT_IMAGE_SIZE,
+    GainDataset,
+    GainSample,
+    collate_gain_samples,
+    load_manifest,
+    sample_key,
+)
 from model import ContextPoseCNN, LVSMGainPredictor
 
 
@@ -122,6 +129,43 @@ def train(args: argparse.Namespace) -> Path:
         args.validation_fraction,
         args.test_fraction,
     )
+    print("training configuration:")
+    print(f"  model: {args.model}")
+    print(f"  dataset: {args.dataset}")
+    print(f"  selected samples: {len(samples)}")
+    print(
+        "  split samples: "
+        f"train={len(train_samples)}, "
+        f"validation={len(validation_samples)}, "
+        f"test={len(test_samples)}"
+    )
+    print(f"  scenes: {split}")
+    print(f"  image size: {args.image_size}x{args.image_size}")
+    print(f"  batch size: {args.batch_size}")
+    print(f"  learning rate: {args.learning_rate:g}")
+    print(f"  scheduler: {args.scheduler}")
+    if args.scheduler == "plateau":
+        print(
+            "  scheduler settings: "
+            f"factor={args.scheduler_factor:g}, "
+            f"patience={args.scheduler_patience}, "
+            f"min_lr={args.min_learning_rate:g}"
+        )
+    elif args.scheduler == "cosine":
+        print(f"  scheduler settings: min_lr={args.min_learning_rate:g}")
+    print(
+        "  early stopping: "
+        + (
+            f"patience={args.early_stopping_patience}"
+            if args.early_stopping_patience
+            else "disabled"
+        )
+    )
+    if len(set(split["train"]) | set(split["validation"]) | set(split["test"])) == 1:
+        print(
+            "  note: one scene is reused for all splits; "
+            "this is a pipeline/overfitting smoke test, not generalization."
+        )
     targets = torch.tensor([sample.psnr_gain for sample in train_samples])
     target_mean = float(targets.mean())
     target_std = max(float(targets.std(unbiased=False)), 1e-6)
@@ -154,8 +198,23 @@ def train(args: argparse.Namespace) -> Path:
         (p for p in model.parameters() if p.requires_grad), lr=args.learning_rate
     )
     criterion = nn.MSELoss()
+    if args.scheduler == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=args.scheduler_factor,
+            patience=args.scheduler_patience,
+            min_lr=args.min_learning_rate,
+        )
+    elif args.scheduler == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=args.min_learning_rate
+        )
+    else:
+        scheduler = None
     writer = _writer(args.log_dir)
     best_loss = math.inf
+    epochs_without_improvement = 0
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -180,16 +239,32 @@ def train(args: argparse.Namespace) -> Path:
         test_loss = _evaluate(
             model, test_loader, target_mean, target_std, args.device, criterion
         )
+        if scheduler is not None:
+            previous_learning_rate = optimizer.param_groups[0]["lr"]
+            if args.scheduler == "plateau":
+                scheduler.step(validation_loss)
+            else:
+                scheduler.step()
+            learning_rate = optimizer.param_groups[0]["lr"]
+            if learning_rate != previous_learning_rate:
+                print(
+                    f"  scheduler: learning rate "
+                    f"{previous_learning_rate:.3g} -> {learning_rate:.3g}"
+                )
+        else:
+            learning_rate = optimizer.param_groups[0]["lr"]
         writer.add_scalars(
             "loss",
             {"train": train_loss, "validation": validation_loss, "test": test_loss},
             epoch,
         )
+        writer.add_scalar("learning_rate", learning_rate, epoch)
         print(
             f"epoch {epoch:03d}/{args.epochs} train_loss={train_loss:.4f} validation_loss={validation_loss:.4f} test_loss={test_loss:.4f}"
         )
         if validation_loss < best_loss:
             best_loss = validation_loss
+            epochs_without_improvement = 0
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -200,6 +275,7 @@ def train(args: argparse.Namespace) -> Path:
                     "image_size": args.image_size,
                     "candidate_rgb_used": False,
                     "num_samples": len(samples),
+                    "sample_ids": [sample_key(sample) for sample in samples],
                     "split": split,
                     "seed": args.seed,
                     "validation_fraction": args.validation_fraction,
@@ -207,9 +283,27 @@ def train(args: argparse.Namespace) -> Path:
                     "epoch": epoch,
                     "validation_loss": validation_loss,
                     "test_loss": test_loss,
+                    "scheduler": args.scheduler,
+                    "early_stopping_patience": args.early_stopping_patience,
                 },
                 args.output,
             )
+            print(
+                f"  checkpoint: saved new best validation loss "
+                f"{validation_loss:.4f}"
+            )
+        else:
+            epochs_without_improvement += 1
+            if (
+                args.early_stopping_patience is not None
+                and args.early_stopping_patience > 0
+                and epochs_without_improvement >= args.early_stopping_patience
+            ):
+                print(
+                    f"early stopping after {epoch} epochs "
+                    f"(patience={args.early_stopping_patience})"
+                )
+                break
     writer.close()
     print(f"Saved checkpoint to {args.output}")
     return args.output
@@ -231,7 +325,14 @@ def parse_args(argv=None, defaults=None):
     parser.add_argument("--validation-fraction", type=float, default=0.2)
     parser.add_argument("--test-fraction", type=float, default=0.2)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--image-size", type=int, default=128)
+    parser.add_argument("--image-size", type=int, default=DEFAULT_IMAGE_SIZE)
+    parser.add_argument(
+        "--scheduler", choices=("none", "plateau", "cosine"), default="plateau"
+    )
+    parser.add_argument("--scheduler-factor", type=float, default=0.5)
+    parser.add_argument("--scheduler-patience", type=int, default=2)
+    parser.add_argument("--min-learning-rate", type=float, default=1e-6)
+    parser.add_argument("--early-stopping-patience", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
@@ -243,6 +344,16 @@ def parse_args(argv=None, defaults=None):
         parser.error("--epochs and --batch-size must be positive")
     if not 0 <= args.validation_fraction < 1 or not 0 <= args.test_fraction < 1:
         parser.error("split fractions must be in [0, 1)")
+    if args.image_size < 1:
+        parser.error("--image-size must be positive")
+    if args.scheduler_factor <= 0 or args.scheduler_factor >= 1:
+        parser.error("--scheduler-factor must be between 0 and 1")
+    if args.scheduler_patience < 0 or args.min_learning_rate < 0:
+        parser.error(
+            "scheduler patience and minimum learning rate must be non-negative"
+        )
+    if args.early_stopping_patience is not None and args.early_stopping_patience < 0:
+        parser.error("--early-stopping-patience must be non-negative")
     timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     args.log_dir = args.log_dir or Path("runs") / args.model_name / timestamp
     args.output = (
