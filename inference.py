@@ -41,7 +41,9 @@ def predict(args: argparse.Namespace) -> None:
         if args.lvsm_checkpoint is None:
             raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
         model = LVSMGainPredictor(
-            args.lvsm_checkpoint, image_size=int(checkpoint.get("image_size", 512))
+            args.lvsm_checkpoint,
+            image_size=int(checkpoint.get("image_size", 512)),
+            latent_tokens=int(checkpoint.get("lvsm_latent_tokens", 3072)),
         )
     else:
         raise ValueError(f"Unsupported checkpoint model_type={model_type!r}")

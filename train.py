@@ -141,6 +141,8 @@ def train(args: argparse.Namespace) -> Path:
     )
     print(f"  scenes: {split}")
     print(f"  image size: {args.image_size}x{args.image_size}")
+    if args.model == "lvsm":
+        print(f"  LVSM latent tokens: {args.lvsm_latent_tokens}")
     print(f"  batch size: {args.batch_size}")
     print(f"  learning rate: {args.learning_rate:g}")
     print(f"  scheduler: {args.scheduler}")
@@ -192,7 +194,11 @@ def train(args: argparse.Namespace) -> Path:
     else:
         if args.lvsm_checkpoint is None:
             raise ValueError("Normal training requires --lvsm-checkpoint.")
-        model = LVSMGainPredictor(args.lvsm_checkpoint, image_size=args.image_size)
+        model = LVSMGainPredictor(
+            args.lvsm_checkpoint,
+            image_size=args.image_size,
+            latent_tokens=args.lvsm_latent_tokens,
+        )
     model = model.to(args.device)
     optimizer = torch.optim.AdamW(
         (p for p in model.parameters() if p.requires_grad), lr=args.learning_rate
@@ -273,6 +279,7 @@ def train(args: argparse.Namespace) -> Path:
                     "target_mean": target_mean,
                     "target_std": target_std,
                     "image_size": args.image_size,
+                    "lvsm_latent_tokens": args.lvsm_latent_tokens,
                     "candidate_rgb_used": False,
                     "num_samples": len(samples),
                     "sample_ids": [sample_key(sample) for sample in samples],
@@ -326,6 +333,7 @@ def parse_args(argv=None, defaults=None):
     parser.add_argument("--test-fraction", type=float, default=0.2)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--image-size", type=int, default=DEFAULT_IMAGE_SIZE)
+    parser.add_argument("--lvsm-latent-tokens", type=int, default=3072)
     parser.add_argument(
         "--scheduler", choices=("none", "plateau", "cosine"), default="plateau"
     )
@@ -346,6 +354,8 @@ def parse_args(argv=None, defaults=None):
         parser.error("split fractions must be in [0, 1)")
     if args.image_size < 1:
         parser.error("--image-size must be positive")
+    if not 1 <= args.lvsm_latent_tokens <= 3072:
+        parser.error("--lvsm-latent-tokens must be between 1 and 3072")
     if args.scheduler_factor <= 0 or args.scheduler_factor >= 1:
         parser.error("--scheduler-factor must be between 0 and 1")
     if args.scheduler_patience < 0 or args.min_learning_rate < 0:

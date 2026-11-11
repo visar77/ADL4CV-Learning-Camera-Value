@@ -168,15 +168,33 @@ applies before the scene split and is recorded in checkpoint metadata.
 
 ### 3. Train the real model
 
-`train.py` uses the LVSM adapter by default. It requires a downloaded LVSM
-module checkpoint:
+`train.py` uses the LVSM scene encoder-decoder adapter by default. It accepts
+the official LVSM training checkpoint containing a `model` state dictionary:
 
 ```bash
 ../.venv/bin/python train.py \
   --dataset data/processed/table.jsonl \
-  --lvsm-checkpoint checkpoints/lvsm/lvsm-module.pt \
+  --lvsm-checkpoint lvsm_scene_encoder_decoder_res512.pt \
   --epochs 50
 ```
+
+The production path uses the 512x512 image variant and all 3,072 LVSM latent
+tokens. To verify the integration on CPU without the full memory/compute cost,
+run a reduced one-sample smoke test:
+
+```bash
+../.venv/bin/python debug_train.py \
+  --model lvsm \
+  --lvsm-checkpoint lvsm_scene_encoder_decoder_res512.pt \
+  --dataset data/processed/table.jsonl \
+  --num-samples 1 \
+  --epochs 1 \
+  --image-size 16 \
+  --lvsm-latent-tokens 4
+```
+
+The reduced image size and latent-token count are for pipeline validation
+only; they do not represent the production LVSM configuration.
 
 Adding more objects under `data/results/<scene>/` and `data/views/<scene>/`
 works with the preprocessing step as long as each scene has matching
@@ -194,7 +212,7 @@ test splits. The default fractions are 60/20/20; override them with
 ```bash
 ../.venv/bin/python train.py --dataset data/processed/all.jsonl \
   --split-file data/splits/all.json \
-  --lvsm-checkpoint checkpoints/lvsm/lvsm-module.pt
+  --lvsm-checkpoint lvsm_scene_encoder_decoder_res512.pt
 ```
 
 Training uses an inverse-frequency sampler so scenes with fewer candidate
@@ -202,18 +220,11 @@ records are not drowned out by scenes with many experiments. A one-scene
 smoke test reuses that scene for all three reports and should not be treated
 as a generalization result.
 
-However, `train.py` is not automatically plug-and-play with an arbitrary
-LVSM download. The current adapter expects the downloaded checkpoint to be a
-serialized `torch.nn.Module` implementing:
-
-```python
-forward(images, context_poses, candidate_pose, mask) -> [batch, embedding_dim]
-```
-
-If the LVSM download is a raw `state_dict`, a package checkpoint, or uses a
-different input convention, an LVSM-specific wrapper still needs to be added
-to `model.py`. The current workspace does not contain the LVSM implementation,
-so downloading weights alone cannot establish that architecture.
+The adapter accepts the official scene encoder-decoder checkpoint format. It
+uses context RGB plus camera poses to create LVSM Plücker-ray conditioning,
+encodes the context views, decodes the candidate pose, and feeds the
+candidate-conditioned token embedding into the trainable gain head. A
+checkpoint from a different LVSM variant may require a separate adapter.
 
 ### 4. Run inference
 
@@ -223,7 +234,7 @@ There is one inference entry point:
 ../.venv/bin/python inference.py \
   --checkpoint checkpoints/psnr_lvsm/<timestamp>/model.pt \
   --dataset data/processed/table.jsonl \
-  --lvsm-checkpoint checkpoints/lvsm/lvsm-module.pt \
+  --lvsm-checkpoint lvsm_scene_encoder_decoder_res512.pt \
   --sample-index 0
 ```
 

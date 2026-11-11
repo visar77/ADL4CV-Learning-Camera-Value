@@ -37,7 +37,11 @@ def main() -> None:
     elif model_type == "lvsm":
         if args.lvsm_checkpoint is None:
             raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
-        model = LVSMGainPredictor(args.lvsm_checkpoint, image_size=image_size)
+        model = LVSMGainPredictor(
+            args.lvsm_checkpoint,
+            image_size=image_size,
+            latent_tokens=int(checkpoint.get("lvsm_latent_tokens", 3072)),
+        )
     else:
         raise ValueError(f"Unsupported checkpoint model_type={model_type!r}")
     model.load_state_dict(checkpoint["model"])
