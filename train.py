@@ -21,7 +21,12 @@ from dataset import (
     load_manifest,
     sample_key,
 )
-from model import ContextPoseCNN, LVSMGainPredictor
+from model import (
+    LVSM_CHECKPOINT_NAME,
+    LVSM_CHECKPOINT_URL,
+    ContextPoseCNN,
+    LVSMGainPredictor,
+)
 
 
 def _writer(path: Path):
@@ -198,6 +203,7 @@ def train(args: argparse.Namespace) -> Path:
             args.lvsm_checkpoint,
             image_size=args.image_size,
             latent_tokens=args.lvsm_latent_tokens,
+            checkpoint_url=args.lvsm_url,
         )
     model = model.to(args.device)
     optimizer = torch.optim.AdamW(
@@ -320,7 +326,12 @@ def parse_args(argv=None, defaults=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--model", choices=("lvsm", "toy"), default="lvsm")
-    parser.add_argument("--lvsm-checkpoint", type=Path)
+    parser.add_argument(
+        "--lvsm-checkpoint",
+        type=Path,
+        default=Path(__file__).resolve().parent / LVSM_CHECKPOINT_NAME,
+    )
+    parser.add_argument("--lvsm-url", default=LVSM_CHECKPOINT_URL)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--log-dir", type=Path)
     parser.add_argument("--checkpoint-root", type=Path, default=Path("checkpoints"))

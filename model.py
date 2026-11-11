@@ -11,6 +11,11 @@ from torch.nn.functional import interpolate
 
 DEFAULT_IMAGE_SIZE = 512
 LVSM_PATCH_SIZE = 8
+LVSM_CHECKPOINT_NAME = "lvsm_scene_encoder_decoder_res512.pt"
+LVSM_CHECKPOINT_URL = (
+    "https://huggingface.co/coast01/LVSM/resolve/main/"
+    "lvsm_scene_encoder_decoder_res512.pt"
+)
 
 
 def prepare_images(images: Tensor, image_size: int) -> Tensor:
@@ -225,7 +230,14 @@ class _LVSMSceneEncoder(nn.Module):
         self.transformer_decoder = nn.ModuleList([_LVSMBlock() for _ in range(12)])
         self.transformer_input_layernorm_decoder = nn.LayerNorm(768, bias=False)
 
-    def load_checkpoint(self, checkpoint: Path) -> None:
+    def load_checkpoint(self, checkpoint: Path, url: str = LVSM_CHECKPOINT_URL) -> None:
+        if not checkpoint.is_file():
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            temporary = checkpoint.with_name(checkpoint.name + ".part")
+            print(f"Downloading LVSM backbone to {checkpoint}...")
+            urllib.request.urlretrieve(url, temporary)
+            temporary.replace(checkpoint)
+            print("Finished downloading LVSM backbone.")
         loaded = torch.load(checkpoint, map_location="cpu", weights_only=True)
         if not isinstance(loaded, dict) or not isinstance(loaded.get("model"), dict):
             raise ValueError("LVSM checkpoint must contain a 'model' state dict.")
@@ -332,13 +344,14 @@ class LVSMGainPredictor(nn.Module):
         feature_dim: int = 128,
         image_size: int = DEFAULT_IMAGE_SIZE,
         latent_tokens: int = 3072,
+        checkpoint_url: str = LVSM_CHECKPOINT_URL,
     ) -> None:
         super().__init__()
         self.image_size = image_size
         if latent_tokens < 1 or latent_tokens > 3072:
             raise ValueError("latent_tokens must be between 1 and 3072.")
         self.lvsm = _LVSMSceneEncoder(latent_tokens=latent_tokens)
-        self.lvsm.load_checkpoint(checkpoint)
+        self.lvsm.load_checkpoint(checkpoint, checkpoint_url)
         for parameter in self.lvsm.parameters():
             parameter.requires_grad = False
         self.lvsm.eval()

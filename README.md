@@ -73,6 +73,7 @@ Reconstruction-Gain-Predictor/
 ├── model.py
 ├── dataset.py
 ├── tests/
+├── lvsm_scene_encoder_decoder_res512.pt  # downloaded LVSM backbone
 ├── runs/<model>/<timestamp>/
 ├── checkpoints/<model>/<timestamp>/
 └── README.md
@@ -82,8 +83,13 @@ Each scene must have matching directories under `data/results/<scene>/` and
 `data/views/<scene>/`. The results provide the base/candidate metrics, while
 the views provide the camera transforms and referenced RGB images. The
 `preprocess.py` command combines them into a manifest under
-`data/processed/`; training does not require reconstruction assets. The
-manifest keeps the original RGB files; the production LVSM path prepares them
+`data/processed/`; training does not require reconstruction assets.
+When `train.py` is run with the LVSM model, it automatically downloads
+`lvsm_scene_encoder_decoder_res512.pt` from Hugging Face into the repository
+root if the file is missing. Override the location with `--lvsm-checkpoint` or
+the download URL with `--lvsm-url`.
+
+The manifest keeps the original RGB files; the production LVSM path prepares them
 at 512x512 at model input time. Preprocessing does not resize or rewrite images.
 
 ## Training workflow
@@ -169,12 +175,12 @@ applies before the scene split and is recorded in checkpoint metadata.
 ### 3. Train the real model
 
 `train.py` uses the LVSM scene encoder-decoder adapter by default. It accepts
-the official LVSM training checkpoint containing a `model` state dictionary:
+the official LVSM training checkpoint containing a `model` state dictionary.
+The checkpoint is downloaded automatically if it is not already present:
 
 ```bash
 ../.venv/bin/python train.py \
   --dataset data/processed/table.jsonl \
-  --lvsm-checkpoint lvsm_scene_encoder_decoder_res512.pt \
   --epochs 50
 ```
 
