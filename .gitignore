@@ -1,9 +1,12 @@
 objects
 views
+views_*/
 .venv
 .idea
 hdris
 reconstructions
+reconstructions_*/
 results
+results_*/
 benchmarks/
 __pycache__
