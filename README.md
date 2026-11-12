@@ -14,6 +14,13 @@ later view-selection/gain-prediction dataset:
 
 ## TL;DR
 
+For matched time/quality comparisons of fresh training, base-PLY initialization,
+and base initialization with extra Gaussians, see
+[Base initialization experiments](./BASE_INITIALIZATION.md).
+`benchmark_reconstructions.py` runs the selected matrix, evaluates all methods
+against the same unchanged base, and writes terminal, JSON and CSV comparisons.
+The standalone orchestrator still defaults to scratch training.
+
 ### 1. Put objects in the objects directory
 
 Place one or more GLB files in:
@@ -452,10 +459,10 @@ python3 orchestrator.py \
     --continue-on-error
 ```
 
-The current resume behavior is at reconstruction granularity. If a process
-stops halfway through a 30,000-iteration FastGS run, the orchestrator retries
-that experiment from the beginning. It does not currently resume from an
-intermediate FastGS checkpoint.
+Resume operates at reconstruction granularity. A completed training receipt and
+the final PLY identify new runs; legacy 30,000-iteration scratch PLYs are also
+accepted. An interrupted reconstruction restarts from its configured
+initialization, rather than an intermediate FastGS checkpoint.
 
 ## Multi-object processing
 
@@ -623,10 +630,9 @@ rendered global images.
 ## Current limitations
 
 - Interrupted FastGS training is not resumed from intermediate checkpoints.
-- The completion check assumes the final iteration is `30000`.
+- The default scratch budget is `30000`; iteration budgets are configurable.
 - The orchestrator processes reconstructions sequentially.
 - The metrics script assumes CUDA and FastGS’s metric dependencies are
   installed.
-- Candidate-pose gain labels are not computed yet. The current pipeline records
-  train subsets and reconstruction metrics; candidate augmentation and PSNR
-  difference generation can be added as a later data-generation stage.
+- Short base-initialized candidate runs need GPU validation against full scratch
+  runs before their adaptation-gain labels are used for dataset generation.

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "reference": "fresh-30k",
+  "base_iterations": 30000,
+  "candidates": [
+    {"strategy": "blindspot"},
+    {"strategy": "next", "count": 1},
+    {"strategy": "random", "count": 1}
+  ],
+  "adaptation_defaults": {
+    "lr_scale": 0.1,
+    "densify_from_iter": 100,
+    "densification_interval": 250
+  },
+  "methods": [
+    {"id": "fresh-30k", "initialization": "scratch", "iterations": 30000},
+    {"id": "base-cloud-3k", "initialization": "base", "iterations": 3000},
+    {"id": "base-cloud-5k", "initialization": "base", "iterations": 5000},
+    {"id": "base-cloud-15k", "initialization": "base", "iterations": 15000},
+    {"id": "base-extra-3k", "initialization": "base", "iterations": 3000, "extra_gaussians": 3000},
+    {"id": "base-extra-5k", "initialization": "base", "iterations": 5000, "extra_gaussians": 3000},
+    {"id": "base-extra-15k", "initialization": "base", "iterations": 15000, "extra_gaussians": 3000}
+  ]
+}
