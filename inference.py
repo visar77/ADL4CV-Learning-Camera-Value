@@ -1,97 +1,110 @@
-"""Run a trained PSNR checkpoint on a preprocessed sample."""
-
+"""Score one candidate or rank an experiment's candidates using a saved head."""
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
-import torch
-
-from dataset import GainSample, collate_gain_samples, load_processed_dataset
-from model import ContextPoseCNN, LVSMGainPredictor
-
-
-def _select(
-    samples: list[GainSample],
-    index: int,
-    scene_id: str | None,
-    experiment_id: str | None,
-    candidate_id: str | None,
-) -> ProcessedSample:
-    selected = [
-        sample
-        for sample in samples
-        if (scene_id is None or sample.scene_id == scene_id)
-        and (experiment_id is None or sample.experiment_id == experiment_id)
-        and (candidate_id is None or sample.candidate_id == candidate_id)
-    ]
-    if index < 0 or index >= len(selected):
-        raise IndexError(f"--sample-index {index} is outside 0..{len(selected) - 1}")
-    return selected[index]
+from dataset import load_manifest, sample_key
+from experiments import select_samples
+from runtime import load_run, score_samples
+from devices import resolve_device
+from paths import resolve_reference
+from predictor import GainEstimator
 
 
-def predict(args: argparse.Namespace) -> None:
-    checkpoint = torch.load(
-        args.checkpoint, map_location=args.device, weights_only=True
-    )
-    model_type = checkpoint.get("model_type")
-    if model_type == "toy":
-        model = ContextPoseCNN(image_size=int(checkpoint.get("image_size", 32)))
-    elif model_type == "lvsm":
-        if args.lvsm_checkpoint is None:
-            raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
-        model = LVSMGainPredictor(
-            args.lvsm_checkpoint,
-            image_size=int(checkpoint.get("image_size", 512)),
-            latent_tokens=int(checkpoint.get("lvsm_latent_tokens", 3072)),
-        )
-    else:
-        raise ValueError(f"Unsupported checkpoint model_type={model_type!r}")
-    model.load_state_dict(checkpoint["model"])
-    model.to(args.device).eval()
-    metadata, samples = load_processed_dataset(args.dataset)
-    sample = _select(
-        samples, args.sample_index, args.scene_id, args.experiment_id, args.candidate_id
-    )
-    default_image_size = 32 if model_type == "toy" else 512
-    batch = collate_gain_samples(
-        [sample], int(checkpoint.get("image_size", default_image_size))
-    )
-    with torch.no_grad():
-        normalized = model(
-            batch["images"].to(args.device),
-            batch["context_poses"].to(args.device),
-            batch["candidate_pose"].to(args.device),
-            batch["mask"].to(args.device),
-        ).item()
-    prediction = normalized * float(checkpoint["target_std"]) + float(
-        checkpoint["target_mean"]
-    )
-    predicted_psnr = sample.base_psnr * (1.0 + prediction)
-    print(f"model image size:       {checkpoint.get('image_size', default_image_size)}")
-    print(f"scene:                  {sample.scene_id}")
-    print(f"experiment/candidate:   {sample.experiment_id}/{sample.candidate_id}")
-    print(f"context views:          {len(sample.context_image_paths)}")
-    print(f"ground-truth rel gain:  {sample.psnr_gain:.6f}")
-    print(f"predicted rel gain:     {prediction:.6f}")
-    print(f"absolute error:         {abs(prediction - sample.psnr_gain):.6f}")
-    print(f"base PSNR:              {sample.base_psnr:.6f}")
-    print(f"ground-truth PSNR:      {sample.candidate_psnr:.6f}")
-    print(f"predicted candidate:    {predicted_psnr:.6f}")
+def predict_request(args):
+    request = json.loads(args.input.read_text())
+    context = request.get("context", [])
+    candidates = request.get("candidates", [])
+    if args.candidate_id:
+        candidates = [c for c in candidates if str(c.get("id")) == args.candidate_id]
+    if args.num_samples is not None:
+        if not 1 <= args.num_samples <= len(candidates):
+            raise ValueError("--num-samples must be between one and the number of candidates.")
+        candidates = candidates[:args.num_samples]
+    if not context or not candidates:
+        raise ValueError("Direct input needs nonempty context and candidates lists.")
+    ids = [str(c.get("id", i)) for i, c in enumerate(candidates)]
+    if len(set(ids)) != len(ids):
+        raise ValueError("Candidate IDs must be unique.")
+    def pose(camera):
+        value = camera.get("pose", camera.get("transform_matrix"))
+        if value is None:
+            raise ValueError("Each camera needs a pose (4x4 camera-to-world matrix).")
+        return value
+    def intrinsics(cameras):
+        values = [c.get("intrinsics", request.get("intrinsics")) for c in cameras]
+        if all(v is None for v in values):
+            return None
+        if any(v is None for v in values):
+            raise ValueError("Supply intrinsics for every camera or a common camera_angle_x.")
+        return values
+    images = [resolve_reference(c["image"], args.input.resolve().parent) for c in context]
+    predictor = GainEstimator(args.checkpoint, backbone_checkpoint=args.lvsm_checkpoint,
+                              device=args.device, candidate_batch_size=args.candidate_batch_size)
+    values = predictor.predict(images, [pose(c) for c in context], [pose(c) for c in candidates],
+                               context_intrinsics=intrinsics(context), candidate_intrinsics=intrinsics(candidates),
+                               camera_angle_x=request.get("camera_angle_x"),
+                               candidate_image_size=request.get("candidate_image_size"),
+                               camera_convention=request.get("camera_convention", "blender"))
+    rows = [{"candidate": identifier, "predicted_gain": value, "target": predictor.config["target"]}
+            for identifier, value in zip(ids, values.tolist())]
+    if args.rank:
+        rows.sort(key=lambda row: row["predicted_gain"], reverse=True)
+    print(json.dumps(rows, indent=2, allow_nan=False))
+    return rows
 
 
-def main() -> None:
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--dataset", type=Path, help="Offline labelled manifest")
+    inputs.add_argument("--input", type=Path, help="Direct JSON request with context images/cameras and candidates")
+    parser.add_argument("--features", type=Path)
     parser.add_argument("--lvsm-checkpoint", type=Path)
     parser.add_argument("--sample-index", type=int, default=0)
+    parser.add_argument("--num-samples", type=int)
     parser.add_argument("--scene-id")
     parser.add_argument("--experiment-id")
     parser.add_argument("--candidate-id")
-    parser.add_argument("--device", default="cpu")
-    args = parser.parse_args()
-    predict(args)
+    parser.add_argument("--rank", action="store_true")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--candidate-batch-size", type=int, default=1)
+    args = parser.parse_args(argv)
+    args.device = resolve_device(args.device)
+    if args.input:
+        if args.features:
+            parser.error("--features is for offline manifests; direct inference prepares features automatically")
+        return predict_request(args)
+    checkpoint, model = load_run(args.checkpoint, args.device)
+    samples = select_samples(load_manifest(args.dataset or Path(checkpoint["dataset_path"])),
+                             count=args.num_samples, scene_id=args.scene_id, experiment_id=args.experiment_id,
+                             duplicates=checkpoint["duplicates"])
+    if args.candidate_id:
+        samples = [s for s in samples if s.candidate_id == args.candidate_id or
+                   any(source.endswith("\x1f" + args.candidate_id) for source in s.label_sources)]
+    if not args.rank:
+        if not 0 <= args.sample_index < len(samples):
+            raise ValueError("Sample index is outside the selected candidates.")
+        samples = [samples[args.sample_index]]
+    if not samples:
+        raise ValueError("No candidate samples selected.")
+    if args.rank:
+        from dataset import context_key
+        if len({context_key(s) for s in samples}) != 1:
+            raise ValueError("--rank requires one physical context; select --scene-id and --experiment-id.")
+    values = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint).flatten().tolist()
+    rows = [{"sample": sample_key(s), "candidate": s.candidate_id, "predicted_gain": value,
+             "target": checkpoint["target"], "ground_truth_relative_gain": s.psnr_gain,
+             "predicted_delta_db": value if checkpoint["target"] == "delta-db" else
+                 value * abs(s.base_psnr) if s.base_psnr is not None else None}
+            for s, value in zip(samples, values)]
+    if args.rank:
+        rows.sort(key=lambda row: row["predicted_gain"], reverse=True)
+    print(json.dumps(rows, indent=2, allow_nan=False))
+    return rows
 
 
 if __name__ == "__main__":

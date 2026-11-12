@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import urllib.request
+from abc import ABC, abstractmethod
+
+from geometry import apply_frame, context_frame, rays
 from pathlib import Path
 
 import torch
@@ -20,92 +23,23 @@ LVSM_CHECKPOINT_URL = (
 
 def prepare_images(images: Tensor, image_size: int) -> Tensor:
     """Convert RGB tensors from uint8/0..255 into normalized model input."""
-    images = images.float()
-    if images.max() > 1:
-        images = images / 255.0
+    if images.dtype == torch.uint8:
+        images = images.float() / 255.0
+    elif images.is_floating_point():
+        images = images.float()  # Floating input contract: [0, 1].
+    else:
+        raise TypeError("Images must be uint8 [0,255] or floating point [0,1].")
     batch, views, channels, height, width = images.shape
-    images = interpolate(
-        images.reshape(batch * views, channels, height, width),
-        size=(image_size, image_size),
-        mode="bilinear",
-        align_corners=False,
-    )
-    return images.reshape(batch, views, channels, image_size, image_size)
+    if (height, width) != (image_size, image_size):
+        images = interpolate(
+            images.reshape(batch * views, channels, height, width),
+            size=(image_size, image_size), mode="bilinear", align_corners=False,
+        ).reshape(batch, views, channels, image_size, image_size)
+    return images
 
 
-class LVSMBackbone(nn.Module):
-    """Frozen LVSM adapter with a downloadable checkpoint.
-
-    The small adapter is deliberately checkpoint-compatible and replaceable:
-    when the real LVSM encoder/input representation is available, only this
-    class needs to change. A checkpoint or URL must be supplied for a normal
-    training run; tests inject a mock predictor before this class is created.
-    """
-
-    def __init__(
-        self,
-        input_dim: int,
-        feature_dim: int = 128,
-        checkpoint: Path | None = None,
-        url: str | None = None,
-    ) -> None:
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, feature_dim),
-        )
-        self._load_checkpoint(checkpoint, url)
-        for parameter in self.parameters():
-            parameter.requires_grad = False
-        self.eval()
-
-    def _load_checkpoint(self, checkpoint: Path | None, url: str | None) -> None:
-        if checkpoint is None:
-            raise ValueError("A backbone checkpoint path is required.")
-        if not checkpoint.is_file():
-            if not url:
-                raise FileNotFoundError(
-                    f"Backbone checkpoint not found at {checkpoint}. "
-                    "Provide --backbone-url to download it."
-                )
-            checkpoint.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(url, checkpoint)
-        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        self.load_state_dict(state)
-
-    def forward(self, features: Tensor) -> Tensor:
-        return self.encoder(features)
-
-
-class GainPredictor(nn.Module):
-    """Frozen LVSM backbone followed by a trainable single-value MLP head."""
-
-    def __init__(
-        self,
-        input_dim: int,
-        backbone_checkpoint: Path | None,
-        backbone_url: str | None,
-        backbone_feature_dim: int = 128,
-    ) -> None:
-        super().__init__()
-        self.backbone = LVSMBackbone(
-            input_dim=input_dim,
-            feature_dim=backbone_feature_dim,
-            checkpoint=backbone_checkpoint,
-            url=backbone_url,
-        )
-        self.regression_head = nn.Sequential(
-            nn.Linear(backbone_feature_dim, 64),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(64, 1),
-        )
-
-    def forward(self, features: Tensor) -> Tensor:
-        with torch.no_grad():
-            encoded = self.backbone(features)
-        return self.regression_head(encoded)
+def _normalize_lvsm_rgb(images: Tensor) -> Tensor:
+    return images.float() * 2.0 - 1.0
 
 
 class ContextPoseCNN(nn.Module):
@@ -116,7 +50,7 @@ class ContextPoseCNN(nn.Module):
     """
 
     def __init__(
-        self, pose_dim: int = 16, context_dim: int = 64, image_size: int = 32
+        self, pose_dim: int = 16, context_dim: int = 64, image_size: int = 32, dropout: float = 0.0
     ) -> None:
         super().__init__()
         self.image_size = image_size
@@ -134,7 +68,7 @@ class ContextPoseCNN(nn.Module):
         self.regression_head = nn.Sequential(
             nn.Linear(context_dim * 3, 64),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout),
             nn.Linear(64, 1),
         )
 
@@ -144,6 +78,7 @@ class ContextPoseCNN(nn.Module):
         context_poses: Tensor,
         candidate_pose: Tensor,
         mask: Tensor,
+        **unused,
     ) -> Tensor:
         if images.ndim != 5 or context_poses.ndim != 3 or mask.ndim != 2:
             raise ValueError(
@@ -199,7 +134,7 @@ class _LVSMBlock(nn.Module):
         self.heads = dimension // head_dimension
         self.head_dimension = head_dimension
 
-    def forward(self, values: Tensor) -> Tensor:
+    def forward(self, values: Tensor, valid_tokens: Tensor | None = None) -> Tensor:
         normalized = self.norm1(values)
         query, key, value = self.attn.to_qkv(normalized).chunk(3, dim=-1)
         shape = (*query.shape[:2], self.heads, self.head_dimension)
@@ -207,7 +142,8 @@ class _LVSMBlock(nn.Module):
         key = self.attn.k_norm(key.reshape(shape))
         value = value.reshape(shape)
         attended = torch.nn.functional.scaled_dot_product_attention(
-            query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+            query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2),
+            attn_mask=None if valid_tokens is None else valid_tokens[:, None, None, :],
         ).transpose(1, 2)
         values = values + self.attn.fc(attended.reshape_as(values))
         return values + self.mlp.mlp(self.norm2(values))
@@ -216,19 +152,22 @@ class _LVSMBlock(nn.Module):
 class _LVSMSceneEncoder(nn.Module):
     """Minimal inference/training adapter for the official LVSM state dict."""
 
-    def __init__(self, latent_tokens: int = 3072) -> None:
+    def __init__(self, latent_tokens: int = 3072, dimension: int = 768,
+                 head_dimension: int = 64, encoder_depth: int = 12, decoder_depth: int = 12,
+                 latent_capacity: int = 3072) -> None:
         super().__init__()
-        self.n_light_field_latent = nn.Parameter(torch.empty(3072, 768))
+        self.n_light_field_latent = nn.Parameter(torch.empty(latent_capacity, dimension))
+        nn.init.normal_(self.n_light_field_latent, std=.02)
         self.latent_tokens = latent_tokens
         self.image_tokenizer = nn.Sequential(
-            nn.Identity(), nn.Linear(576, 768, bias=False)
+            nn.Identity(), nn.Linear(576, dimension, bias=False)
         )
         self.target_pose_tokenizer = nn.Sequential(
-            nn.Identity(), nn.Linear(384, 768, bias=False)
+            nn.Identity(), nn.Linear(384, dimension, bias=False)
         )
-        self.transformer_encoder = nn.ModuleList([_LVSMBlock() for _ in range(12)])
-        self.transformer_decoder = nn.ModuleList([_LVSMBlock() for _ in range(12)])
-        self.transformer_input_layernorm_decoder = nn.LayerNorm(768, bias=False)
+        self.transformer_encoder = nn.ModuleList([_LVSMBlock(dimension, head_dimension) for _ in range(encoder_depth)])
+        self.transformer_decoder = nn.ModuleList([_LVSMBlock(dimension, head_dimension) for _ in range(decoder_depth)])
+        self.transformer_input_layernorm_decoder = nn.LayerNorm(dimension, bias=False)
 
     def load_checkpoint(self, checkpoint: Path, url: str = LVSM_CHECKPOINT_URL) -> None:
         if not checkpoint.is_file():
@@ -238,35 +177,22 @@ class _LVSMSceneEncoder(nn.Module):
             urllib.request.urlretrieve(url, temporary)
             temporary.replace(checkpoint)
             print("Finished downloading LVSM backbone.")
-        loaded = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        loaded = torch.load(checkpoint, map_location="cpu", weights_only=True, mmap=True)
         if not isinstance(loaded, dict) or not isinstance(loaded.get("model"), dict):
             raise ValueError("LVSM checkpoint must contain a 'model' state dict.")
-        state = {
-            key: value
-            for key, value in loaded["model"].items()
-            if key in self.state_dict()
-        }
-        missing, unexpected = self.load_state_dict(state, strict=False)
-        if unexpected or any(key.startswith("loss_computer.") for key in missing):
-            raise ValueError("LVSM checkpoint contains an incompatible model state.")
-        required = {"n_light_field_latent", "image_tokenizer.1.weight"}
-        if not required.issubset(state):
-            raise ValueError("LVSM checkpoint is missing scene encoder weights.")
+        source = loaded["model"]
+        expected = self.state_dict()
+        missing = sorted(expected.keys() - source.keys())
+        unexpected = sorted(k for k in source.keys() - expected.keys()
+                            if not k.startswith(("image_token_decoder.", "loss_computer.")))
+        mismatched = [k for k in expected.keys() & source.keys()
+                      if expected[k].shape != source[k].shape]
+        if missing or unexpected or mismatched:
+            raise ValueError(f"Incompatible LVSM checkpoint: missing={missing}, "
+                             f"unexpected={unexpected}, shape_mismatch={mismatched}")
+        self.load_state_dict({k: source[k] for k in expected}, strict=True, assign=True)
 
-    @staticmethod
-    def _rays(poses: Tensor, height: int, width: int) -> tuple[Tensor, Tensor]:
-        device = poses.device
-        y, x = torch.meshgrid(
-            torch.linspace(-1, 1, height, device=device),
-            torch.linspace(-1, 1, width, device=device),
-            indexing="ij",
-        )
-        directions = torch.stack((x, y, torch.ones_like(x)), dim=-1)
-        rotation = poses[..., :3, :3]
-        origins = poses[..., :3, 3]
-        ray_directions = torch.einsum("bvij,hwj->bvihw", rotation, directions)
-        ray_origins = origins[..., :, None, None].expand_as(ray_directions)
-        return ray_origins, torch.nn.functional.normalize(ray_directions, dim=2)
+    _rays = staticmethod(rays)
 
     @staticmethod
     def _pose_condition(ray_origins: Tensor, ray_directions: Tensor) -> Tensor:
@@ -288,96 +214,121 @@ class _LVSMSceneEncoder(nn.Module):
         ).permute(0, 2, 4, 3, 5, 1)
         return tokenizer[1](values.reshape(batch * views, -1, channels * patch * patch))
 
-    def forward(
-        self,
-        images: Tensor,
-        context_poses: Tensor,
-        candidate_pose: Tensor,
-        mask: Tensor,
-    ) -> Tensor:
+    def encode_context(self, images, context_poses, mask, context_intrinsics):
         batch, views, _, height, width = images.shape
         if height % LVSM_PATCH_SIZE or width % LVSM_PATCH_SIZE:
             raise ValueError("LVSM image dimensions must be divisible by 8.")
         context_poses = context_poses.reshape(batch, views, 4, 4)
-        candidate_pose = candidate_pose.reshape(batch, 1, 4, 4)
-        ray_o, ray_d = self._rays(context_poses, height, width)
-        posed_images = torch.cat(
-            (images.float() / 255.0 * 2.0 - 1.0, self._pose_condition(ray_o, ray_d)),
-            dim=2,
-        )
-        image_tokens = self._tokenize(self.image_tokenizer, posed_images)
-        image_tokens = image_tokens.reshape(batch, views * image_tokens.shape[1], -1)
-        patch_count = image_tokens.shape[1] // views
-        image_mask = mask.repeat_interleave(patch_count, dim=1).unsqueeze(-1)
-        image_tokens = image_tokens * image_mask.to(image_tokens.dtype)
-        latent = (
-            self.n_light_field_latent[: self.latent_tokens]
-            .unsqueeze(0)
-            .expand(batch, -1, -1)
-        )
-        encoded = torch.cat((latent, image_tokens), dim=1)
+        frame, scale = context_frame(context_poses, mask)
+        context_poses = apply_frame(context_poses, frame, scale)
+        intrinsics = torch.where(mask[..., None], context_intrinsics,
+                                 context_intrinsics.new_tensor([1, 1, 0.5, 0.5]))
+        ray_o, ray_d = rays(context_poses, intrinsics, height, width)
+        posed = torch.cat((_normalize_lvsm_rgb(images), self._pose_condition(ray_o, ray_d)), dim=2)
+        tokens = self._tokenize(self.image_tokenizer, posed)
+        patches = tokens.shape[1]
+        tokens = tokens.reshape(batch, views * patches, -1)
+        latent = self.n_light_field_latent[:self.latent_tokens].unsqueeze(0).expand(batch, -1, -1)
+        valid = torch.cat((torch.ones(batch, self.latent_tokens, device=mask.device, dtype=torch.bool),
+                           mask.repeat_interleave(patches, dim=1)), dim=1)
+        encoded = torch.cat((latent, tokens), dim=1)
         for layer in self.transformer_encoder:
-            encoded = layer(encoded)
-        latent = encoded[:, : self.latent_tokens]
+            encoded = layer(encoded, valid)
+        return {"latents": encoded[:, :self.latent_tokens], "frame": frame, "scale": scale}
 
-        target_o, target_d = self._rays(candidate_pose, height, width)
-        target_condition = self._pose_condition(target_o, target_d)
-        target_tokens = self._tokenize(self.target_pose_tokenizer, target_condition)
-        decoder_input = torch.cat((target_tokens, latent), dim=1)
-        decoder_input = self.transformer_input_layernorm_decoder(decoder_input)
+    def decode_candidates(self, context, candidate_pose, candidate_intrinsics, height, width):
+        batch, candidates = candidate_pose.shape[:2]
+        poses = apply_frame(candidate_pose.reshape(batch, candidates, 4, 4),
+                            context["frame"], context["scale"])
+        ray_o, ray_d = rays(poses, candidate_intrinsics, height, width)
+        tokens = self._tokenize(self.target_pose_tokenizer, self._pose_condition(ray_o, ray_d))
+        latent = context["latents"][:, None].expand(-1, candidates, -1, -1).reshape(
+            batch * candidates, self.latent_tokens, -1)
+        values = self.transformer_input_layernorm_decoder(torch.cat((tokens, latent), dim=1))
         for layer in self.transformer_decoder:
-            decoder_input = layer(decoder_input)
-        return decoder_input[:, : target_tokens.shape[1]].mean(dim=1)
+            values = layer(values)
+        return values[:, :tokens.shape[1]].mean(dim=1).reshape(batch, candidates, -1)
+
+    def forward(self, images, context_poses, candidate_pose, mask,
+                context_intrinsics, candidate_intrinsics):
+        context = self.encode_context(images, context_poses, mask, context_intrinsics)
+        return self.decode_candidates(context, candidate_pose[:, None],
+                                      candidate_intrinsics[:, None], *images.shape[-2:])[:, 0]
+
+
+class FeatureBackbone(nn.Module, ABC):
+    """Replaceable frozen extractor. Cameras use OpenCV c2w convention.
+
+    Context state is opaque to callers. Candidate poses are [B,Q,16] and
+    normalized intrinsics are [B,Q,4]; decoded features are [B,Q,D].
+    """
+    feature_dim: int
+
+    @abstractmethod
+    def encode_context(self, images, context_poses, mask, context_intrinsics):
+        raise NotImplementedError
+
+    @abstractmethod
+    def decode_candidates(self, context, candidate_poses, candidate_intrinsics):
+        raise NotImplementedError
+
+
+class LVSMFeatureBackbone(FeatureBackbone):
+    feature_dim = 768
+
+    def __init__(self, checkpoint: Path, image_size=DEFAULT_IMAGE_SIZE,
+                 latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL):
+        super().__init__()
+        if image_size < 8 or image_size % 8 or not 1 <= latent_tokens <= 3072:
+            raise ValueError("LVSM requires an image size divisible by 8 and 1..3072 latents.")
+        self.image_size = image_size
+        with torch.device("meta"):
+            self.encoder = _LVSMSceneEncoder(latent_tokens)
+        self.encoder.load_checkpoint(Path(checkpoint), checkpoint_url)
+        self.requires_grad_(False)
+        self.eval()
+
+    def train(self, mode=True):
+        return super().train(False)
+
+    def encode_context(self, images, context_poses, mask, context_intrinsics):
+        if context_intrinsics is None:
+            raise ValueError("Missing intrinsics. Regenerate the manifest with preprocess.py.")
+        with torch.no_grad():
+            return self.encoder.encode_context(prepare_images(images, self.image_size),
+                                               context_poses, mask, context_intrinsics)
+
+    def decode_candidates(self, context, candidate_poses, candidate_intrinsics):
+        with torch.no_grad():
+            return self.encoder.decode_candidates(context, candidate_poses, candidate_intrinsics,
+                                                   self.image_size, self.image_size)
+
+
+BACKBONES = {"lvsm": LVSMFeatureBackbone}
+
+
+def register_backbone(name: str, factory):
+    """Register a FeatureBackbone factory without changing the feature trainer."""
+    if name in BACKBONES:
+        raise ValueError(f"Backbone already registered: {name}")
+    BACKBONES[name] = factory
+
+
+class FeatureGainHead(nn.Sequential):
+    def __init__(self, feature_dim: int, dropout: float = 0.0):
+        super().__init__(nn.Linear(feature_dim, 64), nn.GELU(), nn.Dropout(dropout), nn.Linear(64, 1))
 
 
 class LVSMGainPredictor(nn.Module):
-    """Trainable gain head around a downloaded LVSM context/query module.
-
-    The checkpoint is the official LVSM training checkpoint containing a
-    ``model`` state dict. The LVSM scene encoder is frozen and its
-    candidate-conditioned token embedding feeds the trainable gain head.
-    """
-
-    def __init__(
-        self,
-        checkpoint: Path,
-        feature_dim: int = 128,
-        image_size: int = DEFAULT_IMAGE_SIZE,
-        latent_tokens: int = 3072,
-        checkpoint_url: str = LVSM_CHECKPOINT_URL,
-    ) -> None:
+    """Online wrapper; training uses the same head on cached features."""
+    def __init__(self, checkpoint: Path, feature_dim=768, image_size=DEFAULT_IMAGE_SIZE,
+                 latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL, dropout=0.0):
         super().__init__()
-        self.image_size = image_size
-        if latent_tokens < 1 or latent_tokens > 3072:
-            raise ValueError("latent_tokens must be between 1 and 3072.")
-        self.lvsm = _LVSMSceneEncoder(latent_tokens=latent_tokens)
-        self.lvsm.load_checkpoint(checkpoint, checkpoint_url)
-        for parameter in self.lvsm.parameters():
-            parameter.requires_grad = False
-        self.lvsm.eval()
-        self.regression_head = nn.Sequential(
-            nn.LazyLinear(64),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(64, 1),
-        )
+        self.backbone = LVSMFeatureBackbone(checkpoint, image_size, latent_tokens, checkpoint_url)
+        self.regression_head = FeatureGainHead(self.backbone.feature_dim, dropout)
 
-    def forward(
-        self,
-        images: Tensor,
-        context_poses: Tensor,
-        candidate_pose: Tensor,
-        mask: Tensor,
-    ) -> Tensor:
-        with torch.no_grad():
-            encoded = self.lvsm(
-                prepare_images(images, self.image_size),
-                context_poses,
-                candidate_pose,
-                mask,
-            )
-        if isinstance(encoded, (tuple, list)):
-            encoded = encoded[0]
-        if encoded.ndim != 2:
-            raise ValueError("LVSM must return an embedding shaped [batch, features].")
+    def forward(self, images, context_poses, candidate_pose, mask,
+                context_intrinsics=None, candidate_intrinsics=None):
+        context = self.backbone.encode_context(images, context_poses, mask, context_intrinsics)
+        encoded = self.backbone.decode_candidates(context, candidate_pose[:, None], candidate_intrinsics[:, None])[:, 0]
         return self.regression_head(encoded)

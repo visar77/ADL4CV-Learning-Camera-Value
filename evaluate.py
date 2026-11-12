@@ -1,104 +1,41 @@
-"""Evaluate a checkpoint on a chosen scene split without training."""
-
+"""Evaluate exact saved splits using regression and candidate-selection metrics."""
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
-import torch
-from torch import nn
-from torch.utils.data import DataLoader
-
-from dataset import GainDataset, collate_gain_samples, load_manifest, sample_key
-from model import ContextPoseCNN, LVSMGainPredictor
-from train import _split
+from dataset import load_manifest
+from experiments import restored_split, selection_metrics
+from runtime import load_run, score_samples
+from devices import resolve_device
 
 
-def main() -> None:
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument(
-        "--split", choices=("train", "validation", "test"), default="test"
-    )
-    parser.add_argument("--split-file", type=Path)
+    parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--split", choices=("train", "validation", "test"), default="test")
+    parser.add_argument("--features", type=Path)
     parser.add_argument("--lvsm-checkpoint", type=Path)
-    parser.add_argument("--validation-fraction", type=float, default=0.2)
-    parser.add_argument("--test-fraction", type=float, default=0.2)
-    parser.add_argument("--device", default="cpu")
-    args = parser.parse_args()
-    checkpoint = torch.load(
-        args.checkpoint, map_location=args.device, weights_only=True
-    )
-    image_size = int(checkpoint.get("image_size", 512))
-    model_type = checkpoint.get("model_type")
-    if model_type == "toy":
-        model = ContextPoseCNN(image_size=int(checkpoint.get("image_size", 32)))
-    elif model_type == "lvsm":
-        if args.lvsm_checkpoint is None:
-            raise ValueError("--lvsm-checkpoint is required for an LVSM checkpoint.")
-        model = LVSMGainPredictor(
-            args.lvsm_checkpoint,
-            image_size=image_size,
-            latent_tokens=int(checkpoint.get("lvsm_latent_tokens", 3072)),
-        )
-    else:
-        raise ValueError(f"Unsupported checkpoint model_type={model_type!r}")
-    model.load_state_dict(checkpoint["model"])
-    model.to(args.device).eval()
-    samples = load_manifest(args.dataset)
-    if checkpoint.get("sample_ids") is not None:
-        selected_ids = set(checkpoint["sample_ids"])
-        samples = [sample for sample in samples if sample_key(sample) in selected_ids]
-        if len(samples) != len(selected_ids):
-            raise ValueError(
-                "The dataset does not contain every sample used by the checkpoint."
-            )
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+    args.device = resolve_device(args.device)
+    checkpoint, model = load_run(args.checkpoint, args.device)
+    samples = restored_split(load_manifest(args.dataset or Path(checkpoint["dataset_path"])), checkpoint, args.split)
     if not samples:
-        raise ValueError("The dataset contains no samples used by the checkpoint.")
-    stored = checkpoint.get("split")
-    if stored:
-        assignments = {
-            name: set(stored.get(name, [])) for name in ("train", "validation", "test")
-        }
-        groups = tuple(
-            [sample for sample in samples if sample.scene_id in assignments[name]]
-            for name in ("train", "validation", "test")
-        )
-    else:
-        groups = _split(
-            samples,
-            checkpoint.get("seed", 42),
-            args.split_file,
-            args.validation_fraction,
-            args.test_fraction,
-        )
-    split_samples = {"train": groups[0], "validation": groups[1], "test": groups[2]}[
-        args.split
-    ]
-    loader = DataLoader(
-        GainDataset(split_samples),
-        batch_size=8,
-        collate_fn=lambda b: collate_gain_samples(b, image_size),
-    )
-    criterion = nn.MSELoss()
-    total = 0.0
-    with torch.no_grad():
-        for batch in loader:
-            prediction = model(
-                batch["images"].to(args.device),
-                batch["context_poses"].to(args.device),
-                batch["candidate_pose"].to(args.device),
-                batch["mask"].to(args.device),
-            )
-            target = (
-                (batch["targets"] - checkpoint["target_mean"])
-                / checkpoint["target_std"]
-            ).to(args.device)
-            total += criterion(prediction, target).item() * len(batch["samples"])
-    print(f"split: {args.split}")
-    print(f"samples: {len(split_samples)}")
-    print(f"normalized_mse: {total / len(split_samples):.6f}")
+        raise ValueError(f"The {args.split} split is empty in {checkpoint['mode']} mode. "
+                         "Use --split train to inspect an overfitting run.")
+    prediction = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint)
+    report = {"mode": checkpoint["mode"], "split": args.split,
+              **selection_metrics(samples, prediction, checkpoint["target"])}
+    text = json.dumps(report, indent=2, allow_nan=False)
+    print(text)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(text)
+    return report
 
 
 if __name__ == "__main__":
