@@ -119,6 +119,10 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
     other_provenance = method["metrics_provenance"]["base"]
     if base_provenance["checkpoint_sha256"] != other_provenance["checkpoint_sha256"]:
         raise ValueError("Methods do not use the same original base PLY")
+    for result in (reference, method):
+        recorded_base = result.get("protocol", {}).get("original_base_sha256")
+        if recorded_base and recorded_base != base_provenance["checkpoint_sha256"]:
+            raise ValueError("Original base PLY changed after training; rerun the matched benchmark")
     if any(abs(baseline[m] - other_base[m]) > 1e-5 for m in METRICS):
         raise ValueError("The shared original base has inconsistent metrics")
     if base_provenance["test_data_sha256"] != other_provenance["test_data_sha256"]:
@@ -129,9 +133,25 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
     if ref_candidates.keys() != new_candidates.keys() and not allow_incomplete:
         raise ValueError(f"Candidate sets differ: reference={sorted(ref_candidates)}, method={sorted(new_candidates)}")
     rows = []
+    control = method["reconstructions"].get("base_control")
+    control_metrics = None
+    if control:
+        if control.get("status") != "complete":
+            raise ValueError("Base-only control is not complete")
+        control_metrics = metric_values(method, "base_control")
+        control_provenance = method["metrics_provenance"]["base_control"]
+        if (control["train_lattice_indices"] != method["train_lattice_indices"]
+                or control_provenance["test_data_sha256"] != base_provenance["test_data_sha256"]
+                or control_provenance.get("training_cameras_sha256")
+                != other_provenance.get("training_cameras_sha256")
+                or set(method["metrics"]["base_control"]["per_view"])
+                != set(reference["metrics"]["base"]["per_view"])):
+            raise ValueError("Base-only control cameras/test corpus differ from the matched base")
     for index in sorted(ref_candidates.keys() & new_candidates.keys()):
         ref_name, name = ref_candidates[index], new_candidates[index]
         old, new = reference["reconstructions"][ref_name], method["reconstructions"][name]
+        if control and control["iterations"] != new["iterations"]:
+            raise ValueError("Base-only control and warm candidate budgets differ")
         if old["train_lattice_indices"] != new["train_lattice_indices"]:
             raise ValueError(f"Training cameras differ for candidate index {index}")
         for result, key in ((reference, ref_name), (method, name)):
@@ -157,6 +177,7 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
                      "reference_metrics": ref_metrics, "method_metrics": new_metrics,
                      "reference_gain": ref_gain, "method_gain": new_gain,
                      "delta_gain": {m: new_gain[m] - ref_gain[m] for m in METRICS},
+                     "method_gain_over_control": gains(new_metrics, control_metrics) if control_metrics else None,
                      "timing_environment_verified": bool(ref_environment and new_environment)})
     aggregate = summary(rows)
     fresh_gains = [r["reference_gain"]["PSNR"] for r in rows]
@@ -165,10 +186,14 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
     best = max(new_gains)
     chosen = [r["reference_gain"]["PSNR"] for r in rows if r["method_gain"]["PSNR"] == best]
     aggregate["selected_view_regret_db"] = max(fresh_gains) - mean(chosen)
+    aggregate["psnr_top_choice_agreement"] = mean(value == max(fresh_gains) for value in chosen)
+    aggregate["base_control_gain"] = gains(control_metrics, baseline) if control_metrics else None
+    aggregate["mean_method_gain_over_control"] = (
+        {metric: mean(row["method_gain_over_control"][metric] for row in rows) for metric in METRICS}
+        if control_metrics else None)
     base_seconds = timing(reference["reconstructions"]["base"])[0]
     preparation = (method.get("initialization") or {}).get("preparation") or {}
     preparation_seconds = preparation.get("wall_time_seconds", 0)
-    control = method["reconstructions"].get("base_control")
     aggregate.update({"shared_base_seconds": base_seconds,
                       "initialization_preparation_seconds": preparation_seconds,
                       "base_control_seconds": timing(control)[0] if control else 0})
@@ -182,6 +207,7 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
         aggregate["production_speedup"] = fresh_total / method_total if fresh_total is not None and method_total else None
     return {"object_id": reference["object_id"], "experiment_id": reference["experiment_id"],
             "reference": reference_id, "method": method_id, "base_metrics": baseline,
+            "base_control_metrics": control_metrics,
             "original_base_sha256": base_provenance["checkpoint_sha256"],
             "missing_from_method": sorted(ref_candidates.keys() - new_candidates.keys()),
             "missing_from_reference": sorted(new_candidates.keys() - ref_candidates.keys()),
@@ -205,6 +231,12 @@ def build_report(results_root, reference_id, method_ids=None, allow_incomplete=F
             records[key] = record
         return records
     reference = load_contexts(reference_id)
+    if context_keys is not None and not allow_incomplete:
+        expected = {key for key in context_keys
+                    if (not object_ids or key[0] in object_ids)
+                    and (not experiment_ids or key[1] in experiment_ids)}
+        if expected - reference.keys():
+            raise ValueError(f"Missing reference contexts: {sorted(expected - reference.keys())}")
     if not reference:
         raise ValueError(f"No reference results found under {root / reference_id}")
     method_ids = method_ids or sorted(p.name for p in root.iterdir() if p.is_dir() and p.name != reference_id)
@@ -229,6 +261,7 @@ def build_report(results_root, reference_id, method_ids=None, allow_incomplete=F
         selected = [item for item in comparisons if item["method"] == method_id]
         overall[method_id] = {**summary([row for item in selected for row in item["rows"]]),
                               "contexts": len(selected),
+                              "mean_psnr_top_choice_agreement": mean(item["summary"]["psnr_top_choice_agreement"] for item in selected),
                               "mean_selected_view_regret_db": mean(item["summary"]["selected_view_regret_db"] for item in selected)}
     return {"schema_version": 1, "reference": reference_id,
             "timing_definition": "training subprocess wall time; evaluation excluded",
@@ -262,7 +295,13 @@ def text_report(report):
                      " / ".join(formatted(s["mean_reference_gain"][m]) for m in METRICS) + "; " + comparison["method"] + " " +
                      " / ".join(formatted(s["mean_method_gain"][m]) for m in METRICS))
         lines.append(f"Negative PSNR gains: fresh {s['negative_psnr_gains_reference']}/{len(values)-1}; method {s['negative_psnr_gains_method']}/{len(values)-1}. "
-                     f"PSNR gain MAE {formatted(s['gain_mae']['PSNR'])} dB; rank correlation {formatted(s['psnr_spearman'])}; selection regret {formatted(s['selected_view_regret_db'])} dB.")
+                     f"PSNR gain MAE {formatted(s['gain_mae']['PSNR'])} dB; rank correlation {formatted(s['psnr_spearman'])}; "
+                     f"top-choice agreement {formatted(s['psnr_top_choice_agreement'])}; selection regret {formatted(s['selected_view_regret_db'])} dB.")
+        if s["base_control_gain"] is not None:
+            lines.append("Base-only adaptation gain (PSNR / SSIM / LPIPS): " +
+                         " / ".join(formatted(s["base_control_gain"][m]) for m in METRICS))
+            lines.append("Mean candidate gain over adapted base-only control (PSNR / SSIM / LPIPS): " +
+                         " / ".join(formatted(s["mean_method_gain_over_control"][m]) for m in METRICS))
         lines.append(f"Shared base: {formatted(s['shared_base_seconds'], 2)}s; initialization preparation: {formatted(s['initialization_preparation_seconds'], 2)}s; "
                      f"optional base-only control: {formatted(s['base_control_seconds'], 2)}s (separate from candidate totals).")
         preparation = (comparison.get("initialization") or {}).get("preparation")
@@ -281,6 +320,8 @@ def text_report(report):
     for method, s in report["overall"].items():
         lines.append(f"{method}: {s['contexts']} contexts, {s['paired_candidates']} pairs, {formatted(s['speedup'], 2)}x speedup, "
                      f"PSNR/SSIM/LPIPS gain delta " + " / ".join(formatted(s["mean_delta_gain"][m]) for m in METRICS))
+        lines.append(f"Context-weighted top-choice agreement {formatted(s['mean_psnr_top_choice_agreement'])}; "
+                     f"mean selection regret {formatted(s['mean_selected_view_regret_db'])} dB.")
     if report["missing_contexts"]:
         lines.append(f"INCOMPLETE: {len(report['missing_contexts'])} unmatched contexts omitted; see JSON.")
     return "\n".join(lines) + "\n"

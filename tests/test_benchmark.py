@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import benchmark_reconstructions as benchmark
-import orchestrator as pipeline
+import reconstruction.training as training
+from reconstruction.io import load_json
+from reconstruction.training import point_cloud_path
 import evaluate_metrics as evaluation
 from test_gaussian_initialization import write_gaussians
 
@@ -90,7 +93,7 @@ output.write_bytes(Path(SEED_PLY).read_bytes())
         return {'averages':values,'per_view':{'00000':values}}
 
     def run_benchmark(self, *extra):
-        with contextlib.redirect_stdout(io.StringIO()), patch.object(pipeline, 'ADAPTER_SCRIPT', self.fastgs/'train.py'), \
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(training, 'ADAPTER_SCRIPT', self.fastgs/'train.py'), \
                 patch.object(evaluation, 'evaluate_reconstruction', side_effect=self.fake_metrics):
             return benchmark.main(self.argv + list(extra))
 
@@ -100,12 +103,12 @@ output.write_bytes(Path(SEED_PLY).read_bytes())
         self.assertEqual(len(calls),10)  # one base, three candidates x three methods
         self.assertEqual(sum('shared_base' in call['path'] for call in calls),1)
         for method in ('fresh','warm','extra'):
-            record=pipeline.load_json(self.output/f'results/{method}/Wave Vase/context/results.json')
+            record=load_json(self.output/f'results/{method}/Wave Vase/context/results.json')
             self.assertEqual(record['protocol']['gain_reference'],'original_base')
             self.assertEqual(record['reconstructions']['base']['iterations'],12)
             self.assertNotIn('base_control',record['reconstructions'])
-        warm=pipeline.load_json(self.output/'results/warm/Wave Vase/context/results.json')
-        extra=pipeline.load_json(self.output/'results/extra/Wave Vase/context/results.json')
+        warm=load_json(self.output/'results/warm/Wave Vase/context/results.json')
+        extra=load_json(self.output/'results/extra/Wave Vase/context/results.json')
         self.assertEqual(extra['initialization']['original_base_sha256'],warm['initialization']['original_base_sha256'])
         self.assertEqual(extra['initialization']['preparation']['initial_gaussians'],24)
         self.assertEqual(report['overall']['warm']['paired_candidates'],3)
@@ -127,7 +130,7 @@ output.write_bytes(Path(SEED_PLY).read_bytes())
     def test_dry_run_is_non_mutating_and_report_only_needs_no_gpu_or_source_data(self):
         before=sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
         output=io.StringIO()
-        with contextlib.redirect_stdout(output), patch.object(pipeline, 'ADAPTER_SCRIPT', self.fastgs/'train.py'):
+        with contextlib.redirect_stdout(output), patch.object(training, 'ADAPTER_SCRIPT', self.fastgs/'train.py'):
             benchmark.main(self.argv+['--dry-run'])
         self.assertEqual(output.getvalue().count('"command": ['),10)
         after=sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
@@ -140,7 +143,7 @@ output.write_bytes(Path(SEED_PLY).read_bytes())
     def test_separate_base_control_is_not_the_gain_reference(self):
         report=self.run_benchmark('--base-control')
         self.assertEqual(len(self.calls()),12)
-        record=pipeline.load_json(self.output/'results/warm/Wave Vase/context/results.json')
+        record=load_json(self.output/'results/warm/Wave Vase/context/results.json')
         self.assertIn('base_control',record['reconstructions'])
         self.assertNotEqual(record['reconstructions']['base']['reconstruction_path'],
                             record['reconstructions']['base_control']['reconstruction_path'])
@@ -159,9 +162,9 @@ output.write_bytes(Path(SEED_PLY).read_bytes())
                 evaluation.main(arguments)
             self.assertEqual(evaluate.call_count,4)
             evaluate.reset_mock()
-            record=pipeline.load_json(self.output/'results/warm/Wave Vase/context/results.json')
+            record=load_json(self.output/'results/warm/Wave Vase/context/results.json')
             candidate=Path(record['reconstructions']['blindspot-1-1']['reconstruction_path'])
-            checkpoint=pipeline.point_cloud_path(candidate,7)
+            checkpoint=point_cloud_path(candidate,7)
             checkpoint.write_bytes(checkpoint.read_bytes()+b'\n')
             with contextlib.redirect_stdout(io.StringIO()):
                 evaluation.main(arguments)
@@ -214,6 +217,101 @@ values={'PSNR':22.,'SSIM':0.8,'LPIPS':0.2}
         with self.assertRaises(ValueError):
             benchmark.load_config(self.config)
         self.assertFalse(self.output.exists())
+
+    def add_matrix_inputs(self):
+        shutil.copytree(self.object_dir, self.object_dir.parent / 'Table')
+        (self.experiments / 'second.json').write_text(json.dumps({
+            'id': 'second', 'train': {'strategy': 'random', 'count': 8, 'seed': 88}}))
+
+    def test_multiple_objects_and_experiments_run_the_complete_default_matrix_and_resume(self):
+        self.add_matrix_inputs()
+        self.config.write_text(json.dumps(benchmark.load_config(benchmark.DEFAULT_CONFIG)))
+        selection = ['--object-ids', 'Wave Vase', 'Table', 'Table',
+                     '--experiment-ids', 'context', 'second']
+        report = self.run_benchmark(*selection)
+        self.assertEqual(set(report['overall']), {'base-cloud-3k'})
+        self.assertEqual(report['overall']['base-cloud-3k']['contexts'], 4)
+        self.assertEqual(report['overall']['base-cloud-3k']['paired_candidates'], 12)
+        self.assertEqual(len(self.calls()), 28)  # four bases + 4 contexts x 3 candidates x 2 methods
+        self.assertEqual(sum('shared_base' in call['path'] for call in self.calls()), 4)
+        for call in self.calls():
+            self.assertEqual(call['iterations'], 3000 if call['init'] else 30000)
+        self.run_benchmark(*selection)
+        self.assertEqual(len(self.calls()), 28)
+        saved = load_json(self.output / 'benchmark_manifest.json')
+        self.assertEqual({(c['object_id'], c['experiment_id']) for c in saved['contexts']},
+                         {(o, e) for o in ('Wave Vase', 'Table') for e in ('context', 'second')})
+
+    def test_config_selection_and_cli_override(self):
+        self.add_matrix_inputs()
+        self.configuration.update(objects=['Table'], experiments=['second'])
+        self.config.write_text(json.dumps(self.configuration))
+        report = self.run_benchmark()
+        self.assertEqual({(c['object_id'], c['experiment_id']) for c in report['comparisons']},
+                         {('Table', 'second')})
+        report = self.run_benchmark('--object-id', 'Wave Vase', '--experiment-id', 'context')
+        self.assertEqual({(c['object_id'], c['experiment_id']) for c in report['comparisons']},
+                         {('Wave Vase', 'context')})
+
+    def test_evaluation_and_reports_replay_exact_saved_contexts_and_methods(self):
+        self.add_matrix_inputs()
+        self.run_benchmark('--object-ids', 'Wave Vase', 'Table',
+                           '--experiment-ids', 'context', 'second',
+                           '--max-contexts', '3', '--method', 'warm', '--train-only')
+        manifest_before = (self.output / 'benchmark_manifest.json').read_bytes()
+        expected = {('Wave Vase', 'context'), ('Wave Vase', 'second'), ('Table', 'context')}
+        calls_before = len(self.calls())
+        # Omit the custom config and input selectors: both come from the saved run.
+        replay = ['--output-root', str(self.output), '--experiments-dir', str(self.experiments),
+                  '--fastgs-dir', str(self.fastgs), '--skip-preflight']
+        with contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(evaluation, 'evaluate_reconstruction', side_effect=self.fake_metrics):
+            report = benchmark.main(replay + ['--evaluate-only'])
+        self.assertEqual({(c['object_id'], c['experiment_id']) for c in report['comparisons']}, expected)
+        self.assertEqual(set(report['overall']), {'warm'})
+        self.assertEqual(len(self.calls()), calls_before)
+        report = self.run_benchmark('--report-only', '--views-root', str(self.root / 'absent'))
+        self.assertEqual({(c['object_id'], c['experiment_id']) for c in report['comparisons']}, expected)
+        self.assertEqual((self.output / 'benchmark_manifest.json').read_bytes(), manifest_before)
+
+    def test_invalid_matrix_selection_fails_before_creating_outputs(self):
+        for selection in (['--object-ids', 'missing'], ['--experiment-ids', 'missing']):
+            with self.subTest(selection=selection), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    self.run_benchmark(*selection)
+                self.assertFalse(self.output.exists())
+
+    def test_duplicate_experiment_ids_are_rejected_before_training(self):
+        shutil.copyfile(self.experiments / 'context.json', self.experiments / 'duplicate.json')
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.run_benchmark()
+        self.assertFalse(self.output.exists())
+
+    def test_evaluation_only_rejects_changed_training_inputs(self):
+        self.run_benchmark('--train-only')
+        (self.object_dir / 'images/train/0.png').write_bytes(b'changed training pixels')
+        before = len(self.calls())
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit):
+            self.run_benchmark('--evaluate-only')
+        self.assertIn('Inputs changed', errors.getvalue())
+        self.assertEqual(len(self.calls()), before)
+
+    def test_documented_validation_preset_plans_nine_contexts_with_controls_without_writing(self):
+        shutil.copytree(self.object_dir, self.object_dir.parent / 'Table')
+        shutil.copytree(self.object_dir, self.object_dir.parent / 'LEGO Miss Liberty (small)')
+        for count in (3, 5, 10):
+            identifier = f'random_{count}_seed_77'
+            (self.experiments / f'{identifier}.json').write_text(json.dumps({
+                'id': identifier, 'train': {'strategy': 'random', 'count': count, 'seed': 77}}))
+        preset = Path(__file__).resolve().parents[1] / 'benchmark_configs/validation.json'
+        self.config.write_text(json.dumps(benchmark.load_config(preset)))
+        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*'))
+        snapshot = self.run_benchmark('--base-control', '--dry-run')
+        self.assertEqual(len(snapshot['contexts']), 9)
+        self.assertEqual(snapshot['selected_methods'], ['fresh-30k', 'base-cloud-3k'])
+        after = sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*'))
+        self.assertEqual(before, after)
 
 
 if __name__=='__main__':

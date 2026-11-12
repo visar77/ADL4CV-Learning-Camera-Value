@@ -117,6 +117,46 @@ class ComparisonTests(unittest.TestCase):
         result = comparison.compare_context(old, new, 'fresh', 'new')
         self.assertIsNone(result['summary']['psnr_spearman'])
         self.assertAlmostEqual(result['summary']['selected_view_regret_db'], 1.5952-1.4984)
+        self.assertAlmostEqual(result['summary']['psnr_top_choice_agreement'], 1/3)
+
+    def test_base_control_exposes_view_effect_without_changing_primary_gain(self):
+        old, new = example(), example(True)
+        control = copy.deepcopy(new['reconstructions']['base'])
+        control.update(iterations=15000, reconstruction_path='/models/control')
+        new['reconstructions']['base_control'] = control
+        values = {'PSNR': 20.5, 'SSIM': 0.52, 'LPIPS': 0.28}
+        new['metrics']['base_control'] = {'averages': values, 'per_view': {'00000': values}}
+        provenance = copy.deepcopy(new['metrics_provenance']['base'])
+        provenance.update(iteration=15000, checkpoint_sha256='control-checkpoint')
+        new['metrics_provenance']['base_control'] = provenance
+        result = comparison.compare_context(old, new, 'fresh', 'warm')
+        self.assertAlmostEqual(result['summary']['base_control_gain']['PSNR'], 0.5)
+        for row in result['rows']:
+            self.assertAlmostEqual(row['method_gain_over_control']['PSNR'], row['method_gain']['PSNR']-0.5)
+            self.assertAlmostEqual(row['method_gain_over_control']['LPIPS'], row['method_gain']['LPIPS']-0.02)
+        new['metrics_provenance']['base_control']['test_data_sha256'] = 'other-test-corpus'
+        with self.assertRaisesRegex(ValueError, 'Base-only control cameras/test corpus'):
+            comparison.compare_context(old, new, 'fresh', 'warm')
+
+    def test_replaced_original_base_is_rejected_even_when_both_methods_evaluate_it(self):
+        old, new = example(), example(True)
+        new['protocol']['original_base_sha256'] = 'previous-base'
+        with self.assertRaisesRegex(ValueError, 'Original base PLY changed'):
+            comparison.compare_context(old, new, 'fresh', 'warm')
+
+    def test_requested_contexts_missing_from_both_methods_cannot_silently_disappear(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for method, record in [('fresh', example()), ('warm', example(True))]:
+                path = root / method / record['object_id'] / record['experiment_id'] / 'results.json'
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps(record))
+            keys = {('Wave Vase', 'furthest_8_seed_77'), ('Table', 'random_3_seed_77')}
+            with self.assertRaisesRegex(ValueError, 'Missing reference contexts'):
+                comparison.build_report(root, 'fresh', ['warm'], context_keys=keys)
+            report = comparison.build_report(root, 'fresh', ['warm'],
+                                             context_keys=keys, object_ids=['Wave Vase'])
+            self.assertEqual(len(report['comparisons']), 1)
 
 
 if __name__ == '__main__':

@@ -14,11 +14,6 @@
   },
   "methods": [
     {"id": "fresh-30k", "initialization": "scratch", "iterations": 30000},
-    {"id": "base-cloud-3k", "initialization": "base", "iterations": 3000},
-    {"id": "base-cloud-5k", "initialization": "base", "iterations": 5000},
-    {"id": "base-cloud-15k", "initialization": "base", "iterations": 15000},
-    {"id": "base-extra-3k", "initialization": "base", "iterations": 3000, "extra_gaussians": 3000},
-    {"id": "base-extra-5k", "initialization": "base", "iterations": 5000, "extra_gaussians": 3000},
-    {"id": "base-extra-15k", "initialization": "base", "iterations": 15000, "extra_gaussians": 3000}
+    {"id": "base-cloud-3k", "initialization": "base", "iterations": 3000}
   ]
 }
