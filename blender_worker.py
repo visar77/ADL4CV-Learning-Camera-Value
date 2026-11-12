@@ -73,96 +73,70 @@ def import_model(glb_path):
     )
 
     center = (minimum + maximum) / 2.0
-    bounding_radius = max((maximum - minimum).length / 2.0, 0.05)
+    bounding_radius = (maximum - minimum).length / 2.0
+    if not math.isfinite(bounding_radius) or bounding_radius <= 0:
+        raise ValueError("Imported object has empty or invalid bounds")
     return center, bounding_radius
 
 
-def configure_hdri(scene, hdri_dir, seed, strength_min=0.7, strength_max=1.3):
-    """Choose and orient one HDRI per object; keep it static across its views."""
+def _create_light(
+    name, light_type, location, rotation, energy, use_shadow=False, specular_factor=1.0
+):
+    """Create a light as in the official Objaverse-XL script."""
     import bpy
 
-    if not os.path.isdir(hdri_dir):
-        raise FileNotFoundError(f"HDRI directory not found: {hdri_dir}")
-
-    hdri_files = sorted(
-        os.path.join(hdri_dir, filename)
-        for filename in os.listdir(hdri_dir)
-        if filename.lower().endswith((".hdr", ".exr"))
-    )
-    if not hdri_files:
-        raise FileNotFoundError(f"No .hdr or .exr files found in: {hdri_dir}")
-
-    rng = random.Random(seed)
-    hdri_path = rng.choice(hdri_files)
-    rotation_z = rng.uniform(0.0, 2.0 * math.pi)
-    strength = rng.uniform(strength_min, strength_max)
-
-    world = bpy.data.worlds.new("RandomizedStaticHDRI")
-    world.use_nodes = True
-
-    nodes = world.node_tree.nodes
-    nodes.clear()
-
-    coordinates = nodes.new("ShaderNodeTexCoord")
-    mapping = nodes.new("ShaderNodeMapping")
-    environment = nodes.new("ShaderNodeTexEnvironment")
-    background = nodes.new("ShaderNodeBackground")
-    output = nodes.new("ShaderNodeOutputWorld")
-
-    environment.image = bpy.data.images.load(hdri_path, check_existing=True)
-    mapping.inputs["Rotation"].default_value[2] = rotation_z
-    background.inputs["Strength"].default_value = strength
-
-    world.node_tree.links.new(
-        coordinates.outputs["Generated"],
-        mapping.inputs["Vector"],
-    )
-    world.node_tree.links.new(
-        mapping.outputs["Vector"],
-        environment.inputs["Vector"],
-    )
-    world.node_tree.links.new(
-        environment.outputs["Color"],
-        background.inputs["Color"],
-    )
-    world.node_tree.links.new(
-        background.outputs["Background"],
-        output.inputs["Surface"],
-    )
-
-    scene.world = world
-
-    print(
-        f"HDRI: {os.path.basename(hdri_path)}, "
-        f"Z rotation: {rotation_z:.3f} rad, "
-        f"strength: {strength:.3f}"
-    )
-    return os.path.basename(hdri_path)
+    light_data = bpy.data.lights.new(name=name, type=light_type)
+    light_object = bpy.data.objects.new(name, light_data)
+    bpy.context.collection.objects.link(light_object)
+    light_object.location = location
+    light_object.rotation_euler = rotation
+    light_data.use_shadow = use_shadow
+    light_data.specular_factor = specular_factor
+    light_data.energy = energy
+    return light_object
 
 
-def configure_objaverse_area_light(scene, center, model_size):
-    """Single large area light, following the Objaverse renderer setup."""
+def randomize_lighting():
+    """Sample the official Objaverse-XL rig once per object."""
     import bpy
-    from mathutils import Vector
 
-    light_data = bpy.data.lights.new(
-        name="ObjaverseArea",
-        type="AREA",
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.object.select_by_type(type="LIGHT")
+    bpy.ops.object.delete()
+    key_light = _create_light(
+        name="Key_Light",
+        light_type="SUN",
+        location=(0, 0, 0),
+        rotation=(0.785398, 0, -0.785398),
+        energy=random.choice([3, 4, 5]),
     )
-    light_data.energy = 30000.0
-    light_data.shape = "DISK"
-
-    # The reference renderer scales its area light to 100.
-    light_data.size = max(100.0 * model_size, 1.0)
-
-    light_obj = bpy.data.objects.new("ObjaverseArea", light_data)
-    scene.collection.objects.link(light_obj)
-
-    # Offset relative to the model, rather than assuming it is centered at origin.
-    light_obj.location = center + Vector((0.0, 0.0, 0.5 * model_size))
-    light_obj.rotation_euler = (0.0, 0.0, 0.0)
-
-    return "objaverse_area"
+    fill_light = _create_light(
+        name="Fill_Light",
+        light_type="SUN",
+        location=(0, 0, 0),
+        rotation=(0.785398, 0, 2.35619),
+        energy=random.choice([2, 3, 4]),
+    )
+    rim_light = _create_light(
+        name="Rim_Light",
+        light_type="SUN",
+        location=(0, 0, 0),
+        rotation=(-0.785398, 0, -3.92699),
+        energy=random.choice([3, 4, 5]),
+    )
+    bottom_light = _create_light(
+        name="Bottom_Light",
+        light_type="SUN",
+        location=(0, 0, 0),
+        rotation=(3.14159, 0, 0),
+        energy=random.choice([1, 2, 3]),
+    )
+    return dict(
+        key_light=key_light,
+        fill_light=fill_light,
+        rim_light=rim_light,
+        bottom_light=bottom_light,
+    )
 
 
 def configure_camera(scene, center, bounding_radius, config):
@@ -178,7 +152,7 @@ def configure_camera(scene, center, bounding_radius, config):
     camera_data.sensor_fit = "HORIZONTAL"
     camera_data.sensor_width = 36.0
     camera_data.lens = camera_data.sensor_width / (2.0 * math.tan(horizontal_fov / 2.0))
-    camera_data.clip_start = 0.01
+    camera_data.clip_start = max(bounding_radius * 0.001, 1e-7)
 
     distance_scale = config.get("camera_distance_scale", 1.15)
     distance = (
@@ -190,9 +164,9 @@ def configure_camera(scene, center, bounding_radius, config):
 
 
 def configure_render(scene, config):
+    """Use the Cycles settings from the supplied Objaverse-XL script."""
     import bpy
 
-    """Set up Cycles rendering."""
     scene.render.engine = "CYCLES"
     scene.render.resolution_x = int(config["image_width"])
     scene.render.resolution_y = int(config["image_height"])
@@ -201,30 +175,30 @@ def configure_render(scene, config):
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.film_transparent = True
 
-    scene.cycles.samples = int(config.get("samples", 32))
+    scene.cycles.samples = 128
+    scene.cycles.diffuse_bounces = 1
+    scene.cycles.glossy_bounces = 1
+    scene.cycles.transparent_max_bounces = 3
+    scene.cycles.transmission_bounces = 3
+    scene.cycles.filter_width = 0.01
     scene.cycles.use_denoising = True
     scene.cycles.device = "CPU"
 
     # GPU is optional. CPU remains the fallback if a usable device isn't found.
     if config.get("use_gpu", False):
         preferences = bpy.context.preferences.addons["cycles"].preferences
-        preferences.compute_device_type = "CUDA"
-        preferences.refresh_devices()
-
-        for device in preferences.devices:
-            device.use = device.type == "CUDA"
-            print("Cycles device:", device.name, device.type, device.use)
-
-        scene.cycles.device = "GPU"
-        scene.cycles.use_denoising = True
-
+        usable_gpu = False
         try:
-            scene.cycles.denoiser = "OPTIX"
-        except (AttributeError, TypeError):
-            print("OptiX denoising setting unavailable; using Blender's default.")
+            preferences.compute_device_type = "CUDA"
+            preferences.refresh_devices()
+            for device in preferences.devices:
+                device.use = device.type == "CUDA"
+                usable_gpu |= device.use
+                print("Cycles device:", device.name, device.type, device.use)
+        except (TypeError, RuntimeError) as error:
+            print(f"CUDA unavailable; using CPU: {error}")
 
-    # Use Blender's standard modern display transform when available.
-    scene.view_settings.view_transform = "AgX"
+        scene.cycles.device = "GPU" if usable_gpu else "CPU"
 
 
 def render_frame(scene, camera, center, distance, direction, image_path):
@@ -286,27 +260,7 @@ def main():
     scene = bpy.context.scene
     center, bounding_radius = import_model(glb_path)
 
-    seed = int(config.get("seed", 0))
-    lighting_mode = config.get("lighting_mode", "area").lower()
-
-    if lighting_mode == "hdri":
-        lighting_name = configure_hdri(
-            scene,
-            os.path.abspath(os.path.join(config_dir, config["hdri_dir"])),
-            seed=seed,
-            strength_min=float(config.get("hdri_strength_min", 0.7)),
-            strength_max=float(config.get("hdri_strength_max", 1.3)),
-        )
-    elif lighting_mode == "area":
-        lighting_name = configure_objaverse_area_light(
-            scene,
-            center=center,
-            model_size=max(bounding_radius * 2.0, 0.1),
-        )
-    else:
-        raise ValueError(
-            f"Unknown lighting_mode {lighting_mode!r}; use 'area' or 'hdri'."
-        )
+    lights = randomize_lighting()
     camera, distance, horizontal_fov = configure_camera(
         scene,
         center,
@@ -327,7 +281,8 @@ def main():
     metadata = {
         "object_id": object_id,
         "glb_path": os.path.relpath(glb_path, object_dir).replace("\\", "/"),
-        "lighting": lighting_name,
+        "lighting": "objaverse_xl",
+        "light_energies": {name: light.data.energy for name, light in lights.items()},
         "lattice_size": lattice_size,
         "trajectory_elevation_deg": trajectory_elevation,
     }
@@ -360,7 +315,6 @@ def main():
         horizontal_fov,
         all_train_frames,
     )
-
 
     test_frames = []
     for image_number, direction in enumerate(test_view_directions()):

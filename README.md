@@ -238,6 +238,12 @@ python3 renderer.py \
     --object-id chair
 ```
 
+Lighting follows the official Objaverse-XL script: four SUN lights with the
+reference rotations and energy choices, sampled once per object, with shadows
+disabled. Original GLB materials are retained. We follow this established protocol
+to keep the method consistent with prior work. See [lighting summary](./LIGHTING.md).
+Regenerate existing view datasets to apply the new lighting.
+
 The renderer creates:
 
 ```text
