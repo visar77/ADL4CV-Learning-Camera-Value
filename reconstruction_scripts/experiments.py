@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Optional
 
 from gaussian_initialization import prepare_initialization
-from reconstruction.datasets import make_dataset
-from reconstruction.io import file_sha256, load_json, save_json
-from reconstruction.training import (
+from reconstruction_scripts.datasets import make_dataset
+from reconstruction_scripts.io import file_sha256, load_json, save_json
+from reconstruction_scripts.training import (
     point_cloud_path,
     reconstruction_complete,
     train_reconstruction,

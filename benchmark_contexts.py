@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from itertools import islice, product
 from pathlib import Path
 
-from reconstruction.datasets import discover_objects, load_experiments, select_ids
-from reconstruction.io import file_sha256, load_json
+from reconstruction_scripts.datasets import discover_objects, load_experiments, select_ids
+from reconstruction_scripts.io import file_sha256, load_json
 
 
 @dataclass

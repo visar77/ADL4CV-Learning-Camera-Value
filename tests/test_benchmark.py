@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import benchmark_reconstructions as benchmark
-import reconstruction.training as training
-from reconstruction.io import load_json
-from reconstruction.training import point_cloud_path
+import reconstruction_scripts.training as training
+from reconstruction_scripts.io import load_json
+from reconstruction_scripts.training import point_cloud_path
 import evaluate_metrics as evaluation
 from test_gaussian_initialization import write_gaussians
 

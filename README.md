@@ -153,7 +153,7 @@ not training randomness.
 A candidate `count` of 6 means six independent base-plus-one-view actions, not
 one reconstruction adding six views. Names encode strategy, requested count,
 and action number, such as `random-6-4`. Duplicate physical candidate indices
-share one reconstruction/evaluation and count once. Candidate indices are the
+share one reconstruction_scripts/evaluation and count once. Candidate indices are the
 matching identity across methods, not their labels.
 
 View the base cameras without rendering or training:
@@ -408,6 +408,42 @@ corpora, and applies every experiment definition to every object, sequentially.
 It uses scratch initialization and 30000 steps for both base and candidates.
 With `--skip-render`, it discovers existing rendered objects instead.
 
+Standalone defaults are stored in
+[reconstruction_scripts/config.json](reconstruction_scripts/config.json). Edit that file,
+or pass `--config my_config.json` containing only the settings you want to
+change. Precedence is **reconstruction_scripts/config.json → custom config → explicit CLI arguments**.
+JSON keys use underscores, matching the CLI option names (`base_iterations`,
+`skip_render`, `object_id`, etc.); object/experiment selections are arrays.
+CLI selections replace configured arrays. Boolean flags also accept a `--no-`
+form, such as `--no-skip-render`, to override a configured `true` value.
+
+For example, a custom config can contain:
+
+```json
+{
+  "skip_render": true,
+  "object_id": ["gamecube", "chair"],
+  "experiment_id": ["random_3_seed_77"],
+  "base_iterations": 30000
+}
+```
+
+```bash
+python orchestrator.py --config my_config.json --base-iterations 15000
+```
+
+Paths in JSON resolve relative to the file that defines them; CLI paths resolve
+relative to the working directory. The bundled config uses `../views`,
+`../objects`, and similar paths to retain repository-level data/output roots;
+FastGS remains at `../../FastGS` relative to that config.
+`python: null` uses the running interpreter.
+Other `null` defaults retain automatic discovery/derived behavior:
+`candidate_iterations` uses the base budget in scratch mode or the config-only
+`base_candidate_iterations` (3000) in warm mode; densification end uses half the
+candidate budget; run name and auxiliary roots follow the rules below.
+Unknown keys, invalid types, and invalid option combinations fail before work starts.
+The benchmark's `--config` continues to select its separate benchmark schema.
+
 ```bash
 python orchestrator.py \
   --skip-render --object-ids gamecube chair \
@@ -481,18 +517,18 @@ filters, all result records under the chosen root are considered.
 
 | Module | Responsibility |
 | --- | --- |
-| `reconstruction/config.py` | Standalone CLI defaults, validation, and path resolution. |
-| `reconstruction/datasets.py` | Corpus discovery, experiment loading, view selection, temporary manifests. |
-| `reconstruction/training.py` | FastGS commands, training specs, receipts, completion checks. |
-| `reconstruction/experiments.py` | Shared initializers, candidate planning, result records, experiment execution. |
-| `reconstruction/io.py` | Atomic JSON records and content hashes. |
+| `reconstruction_scripts/config.json`, `reconstruction_scripts/config.py` | Standalone defaults, CLI overrides, validation, and path resolution. |
+| `reconstruction_scripts/datasets.py` | Corpus discovery, experiment loading, view selection, temporary manifests. |
+| `reconstruction_scripts/training.py` | FastGS commands, training specs, receipts, completion checks. |
+| `reconstruction_scripts/experiments.py` | Shared initializers, candidate planning, result records, experiment execution. |
+| `reconstruction_scripts/io.py` | Atomic JSON records and content hashes. |
 | `benchmark_config.py` | Benchmark schema validation and method options. |
 | `benchmark_contexts.py` | Matrix selection, input fingerprints, exact saved-context replay. |
 | `fastgs_adapter.py`, `fastgs_schedule.py` | PLY initialization and the adaptation loop/schedule. |
 | `gaussian_initialization.py` | Optional cached extra-Gaussian initialization. |
 | `sampling.py` | Training lattice, fixed test directions, base/candidate selection. |
 
-Generated objects, corpora, reconstruction/results trees, benchmark outputs,
+Generated objects, corpora, reconstruction_scripts/results trees, benchmark outputs,
 and Python caches are excluded by `.gitignore` for the standard output names.
 
 ## Verification and limits

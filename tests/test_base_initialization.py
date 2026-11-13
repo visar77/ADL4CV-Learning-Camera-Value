@@ -11,9 +11,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import orchestrator as pipeline
-import reconstruction.training as training
-from reconstruction.io import load_json, save_json
-from reconstruction.training import point_cloud_path, reconstruction_complete
+import reconstruction_scripts.training as training
+from reconstruction_scripts.io import load_json, save_json
+from reconstruction_scripts.training import point_cloud_path, reconstruction_complete
 import evaluate_metrics as evaluation
 
 FAKE_TRAIN = """

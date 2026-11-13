@@ -3,10 +3,10 @@
 import subprocess
 import sys
 
-from reconstruction.config import parse_args
-from reconstruction.datasets import discover_objects, load_experiments
-from reconstruction.experiments import process_experiment
-from reconstruction.io import ROOT, load_json
+from reconstruction_scripts.config import parse_args
+from reconstruction_scripts.datasets import discover_objects, load_experiments
+from reconstruction_scripts.experiments import process_experiment
+from reconstruction_scripts.io import ROOT, load_json
 from sampling import fibonacci_lattice
 
 

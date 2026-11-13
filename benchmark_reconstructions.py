@@ -15,9 +15,9 @@ from benchmark_config import (
     select_methods,
 )
 from benchmark_contexts import fastgs_fingerprint, saved_context_keys, select_contexts
-from reconstruction.config import EXPERIMENTS_DIR, OUTPUT_ROOT
-from reconstruction.experiments import process_experiment
-from reconstruction.io import ROOT, load_json, save_json
+from reconstruction_scripts.config import EXPERIMENTS_DIR, OUTPUT_ROOT
+from reconstruction_scripts.experiments import process_experiment
+from reconstruction_scripts.io import ROOT, load_json, save_json
 from sampling import fibonacci_lattice
 
 

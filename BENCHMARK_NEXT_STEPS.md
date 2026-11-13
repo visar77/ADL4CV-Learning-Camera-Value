@@ -8,7 +8,7 @@ other methods or tune settings during this run. The
 
 ## 1. Prepare the checkout, environment, and inputs
 
-Update the whole repository on the GPU machine, including `reconstruction/`,
+Update the whole repository on the GPU machine, including `reconstruction_scripts/`,
 `benchmark_config.py`, and `benchmark_contexts.py`. Use its existing FastGS
 Python/CUDA environment. All commands below run from `ObjaverseRenderer/`,
 with FastGS at `../FastGS` and corpora under `views/`. Add `--fastgs-dir`,

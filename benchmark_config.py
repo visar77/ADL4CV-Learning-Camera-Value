@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from reconstruction.config import build_parser, resolve_args
-from reconstruction.io import ROOT, load_json
+from reconstruction_scripts.config import build_parser, resolve_args
+from reconstruction_scripts.io import ROOT, load_json
 from sampling import candidate_configurations
 
 DEFAULT_CONFIG = ROOT / "benchmark_configs/base_initialization.json"

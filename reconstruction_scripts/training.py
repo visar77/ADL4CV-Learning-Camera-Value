@@ -5,8 +5,8 @@ import json
 import subprocess
 import time
 
-from reconstruction.datasets import training_manifests
-from reconstruction.io import ROOT, load_json, save_json
+from reconstruction_scripts.datasets import training_manifests
+from reconstruction_scripts.io import ROOT, load_json, save_json
 
 ADAPTER_SCRIPT = ROOT / "fastgs_adapter.py"
 
