@@ -78,6 +78,22 @@ python preprocess.py --relativize data/processed/table.jsonl
 
 This converts paths in place without changing labels. Use your existing filename if it differs; there is no separate migration step for newly generated data.
 
+#### Existing datasets from before the calibration changes
+
+Code updates do not update generated data: `data/` is Git-ignored. A legacy manifest can still have valid images/poses/labels but lack the new `context_intrinsics` and `candidate_intrinsics`. `--relativize` fixes paths **only** and does not add calibration.
+
+Upgrade that existing manifest in place, using the camera transforms already beside its images:
+
+```bash
+python preprocess.py --upgrade data/processed/table.jsonl
+# Only if the metadata lives separately:
+# python preprocess.py --upgrade data/processed/table.jsonl --views-root /path/to/existing/views
+```
+
+This preserves record count, poses, signed gains, and duplicate provenance, and creates a `.jsonl.bak` before changing the file. It does not need reconstruction results, retraining, or candidate RGB. It matches camera poses against the existing transform JSONs and never guesses a field of view. A 100-row legacy manifest remains 100 rows; upgrade does not manufacture the extra controls from a full rebuild.
+
+`preprocess.py --output ...` is a different operation: it rebuilds labels from `--results-root` (default `data/results`). A “no results.json files” error concerns that rebuild lookup, not whether the existing manifest/images were moved or whether CUDA works. A bare positional manifest filename is not accepted; use `--upgrade` for this compatibility repair.
+
 ### 2. Extract frozen features when needed: `features.py`
 
 For cached-backbone training, encodes each distinct context once, decodes its candidate cameras, and saves embeddings. Repeating extraction reuses completed context/candidate files. **This step accelerates training; direct inference performs the backbone computation internally.** Baselines and the CNN skip it.
@@ -218,6 +234,7 @@ These modules are imported by the scripts; they are not additional pipeline comm
 | `tests/test_research_pipeline.py` | Camera/backbone correctness, caching, splits, metrics, and training/CLI integration. |
 | `tests/test_portability_and_inference.py` | Relocation, different working directories, and inference without training artifacts. |
 | `tests/test_validation_and_devices.py` | Rolling validation budgets/weighting, 80/10/10 defaults, and device-independent saves. |
+| `tests/test_manifest_upgrade.py` | Legacy calibration upgrade without raw results/candidate RGB; labels, backups, and failed-upgrade safety. |
 | `.gitignore` | Excludes generated data, runs, checkpoints, and Python caches. |
 
 For another backbone, implement `FeatureBackbone.encode_context()` and `decode_candidates()` in an adapter and register its factory, or pass it to `features.extract_features()`. Context state is a dictionary of tensors; candidate features are `[B,Q,D]`. Cached-head training accepts arbitrary `D`, so the experiment/training code stays shared.

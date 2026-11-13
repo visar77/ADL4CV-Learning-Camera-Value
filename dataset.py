@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass, fields, field, replace
 from functools import lru_cache
@@ -117,9 +118,11 @@ def _records(path):
     return payload if isinstance(payload, list) else [payload]
 
 
-def _intrinsics(payload, frame, image_path):
-    with Image.open(image_path) as image:
-        width, height = image.size
+def _intrinsics(payload, frame, image_path=None, *, image_size=None):
+    if image_size is None:
+        with Image.open(image_path) as image:
+            image_size = image.size
+    width, height = image_size
     values = {**payload, **frame}
     if "fl_x" in values:
         fx = float(values["fl_x"])
@@ -137,7 +140,16 @@ def _intrinsics(payload, frame, image_path):
 def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=None,
                    duplicates="mean") -> list[GainSample]:
     samples = []
-    for results_path in sorted(results_root.rglob("results.json")):
+    result_files = sorted(results_root.rglob("results.json"))
+    if not result_files:
+        raise ValueError(
+            f"No results.json files found under {results_root.resolve()}. "
+            "This rebuild reads reconstruction results, not an existing JSONL manifest. "
+            "To add calibration to an existing dataset without rebuilding its labels, use "
+            "python preprocess.py --upgrade <existing-manifest.jsonl>. "
+            "Otherwise specify --results-root and --views-root for your existing renderer outputs."
+        )
+    for results_path in result_files:
         for raw in _records(results_path):
             scene_id = str(raw["object_id"])
             view_dir = views_root / scene_id
@@ -185,7 +197,9 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                                     path_base="manifest", path_root=output.resolve().parent)
                 samples.append(sample)
     if not samples:
-        raise ValueError("No complete PSNR candidate samples found.")
+        raise ValueError(f"No complete PSNR candidate samples found in {len(result_files)} results.json files "
+                         f"under {results_root.resolve()}. Check candidate statuses and PSNR metrics. "
+                         "An existing JSONL can instead be calibrated with --upgrade; labels are preserved.")
     report = audit_samples(samples)
     if duplicates == "mean":
         samples = deduplicate_samples(samples)
@@ -336,5 +350,137 @@ def relativize_manifest(path: Path):
     temporary = path.with_name(path.name + ".part")
     temporary.write_text("".join(json.dumps(s.to_json()) + "\n" for s in migrated))
     temporary.replace(path)
+    path.with_suffix(".audit.json").write_text(json.dumps(audit_samples(migrated), indent=2))
+    return migrated
+
+
+def require_calibration(samples, manifest=None):
+    missing = sum(not s.context_intrinsics or s.candidate_intrinsics is None for s in samples)
+    if missing:
+        name = str(manifest) if manifest is not None else "<existing-manifest.jsonl>"
+        raise ValueError(
+            f"{missing}/{len(samples)} records lack calibrated intrinsics. "
+            f"Upgrade the existing manifest with: python preprocess.py --upgrade {name}. "
+            "This uses the camera metadata beside its existing images and preserves labels; "
+            "--relativize only changes paths. Use --views-root to specify another existing camera-metadata root."
+        )
+
+
+def _transform_paths(root):
+    paths = []
+    for name in ("transforms_train.json", "transforms_test.json"):
+        global_path = root / "global_transforms" / name
+        candidate = global_path if global_path.is_file() else root / name
+        if candidate.is_file():
+            paths.append(candidate)
+    return paths
+
+
+def _calibration_root(sample, views_root):
+    if views_root is not None:
+        root = Path(views_root) / sample.scene_id
+        if _transform_paths(root):
+            return root
+        raise ValueError(f"No camera transform JSON found under {root}.")
+    # Locate metadata from the existing image, not a reconstruction-results directory.
+    image = sample.image_paths[0]
+    for location in (image.absolute(), image.resolve()):
+        for ancestor in location.parents:
+            if _transform_paths(ancestor):
+                return ancestor
+    raise ValueError(f"Cannot find camera transforms beside {sample.image_paths[0]}. "
+                     "Supply --views-root pointing to the existing directory containing scene folders. "
+                     "Calibration cannot be inferred from RGB/poses alone; no default FOV is assumed.")
+
+
+def upgrade_manifest(path: Path, *, views_root=None):
+    """Fill legacy calibration from existing camera JSONs, without rebuilding labels.
+
+    No result scores, reconstruction files, GPU, or candidate RGB are required.
+    Match context images and poses, and match candidate poses against the global
+    camera catalogue. Validate every record before writing or creating a backup.
+    """
+    samples = load_manifest(path)
+    catalogues = {}
+    migrated = []
+    for sample in samples:
+        image_sizes = []
+        for image_path in sample.image_paths:
+            with Image.open(image_path) as image:
+                image_sizes.append(image.size)
+        context_intrinsics = sample.context_intrinsics
+        candidate_intrinsics = sample.candidate_intrinsics
+        if not context_intrinsics or candidate_intrinsics is None:
+            root = _calibration_root(sample, views_root)
+            if root not in catalogues:
+                frames = []
+                for transform in _transform_paths(root):
+                    payload = json.loads(transform.read_text())
+                    convention = payload.get("camera_convention", "blender")
+                    for frame in payload["frames"]:
+                        image = root / frame["file_path"]
+                        if not image.suffix:
+                            image = image.with_suffix(".png")
+                        pose = to_opencv(torch.tensor(frame["transform_matrix"], dtype=torch.float64), convention).numpy()
+                        frames.append((payload, frame, image.resolve(), pose))
+                catalogues[root] = frames
+            catalogue = catalogues[root]
+            def calibrated(pose_values, image_path=None, fallback_size=None):
+                pose = to_opencv(torch.tensor(pose_values, dtype=torch.float64).reshape(4, 4),
+                                 sample.camera_convention).numpy()
+                matches = [entry for entry in catalogue if np.allclose(entry[3], pose, rtol=0, atol=1e-5)]
+                if image_path is not None:
+                    by_path = [entry for entry in catalogue if entry[2] == image_path.resolve()]
+                    if by_path:
+                        matches = [entry for entry in by_path if np.allclose(entry[3], pose, rtol=0, atol=1e-5)]
+                if not matches:
+                    raise ValueError(f"Camera pose for {sample_key(sample)} is absent from {root}; "
+                                     "verify that its existing images and transforms belong to the same corpus.")
+                values = []
+                for payload, frame, image, _ in matches:
+                    info = {**payload, **frame}
+                    size = (info["w"], info["h"]) if "w" in info and "h" in info else None
+                    if size is None and image.is_file():
+                        with Image.open(image) as source:
+                            size = source.size
+                    if size is None:
+                        size = fallback_size
+                    if size is None:
+                        raise ValueError(f"Image dimensions are required for candidate calibration in {root}; "
+                                         "store w/h in its camera metadata when image sizes differ.")
+                    value = _intrinsics(payload, frame, image_size=size)
+                    if not all(math.isfinite(x) for x in value) or min(value[:2]) <= 0:
+                        raise ValueError(f"Invalid calibration in {root}.")
+                    values.append(value)
+                if any(not np.allclose(values[0], value, rtol=0, atol=1e-7) for value in values[1:]):
+                    raise ValueError(f"Ambiguous candidate calibration for {sample_key(sample)} in {root}.")
+                return values[0]
+            if not context_intrinsics:
+                context_intrinsics = tuple(calibrated(pose, image, size) for pose, image, size in
+                                           zip(sample.context_poses, sample.image_paths, image_sizes))
+            if candidate_intrinsics is None:
+                # Shared-size rendered corpora need no candidate RGB for FOV calibration.
+                common_size = image_sizes[0] if len(set(image_sizes)) == 1 else None
+                candidate_intrinsics = calibrated(sample.candidate_pose, fallback_size=common_size)
+        source = resolve_reference(sample.source_results, sample.path_root)
+        migrated.append(replace(sample, context_intrinsics=context_intrinsics,
+                                candidate_intrinsics=candidate_intrinsics,
+                                context_image_paths=tuple(relative_path(p, path.parent) for p in sample.image_paths),
+                                source_results=relative_path(source, path.parent),
+                                path_base="manifest", path_root=path.resolve().parent))
+    require_calibration(migrated, path)
+    content = "".join(json.dumps(s.to_json()) + "\n" for s in migrated)
+    if content != path.read_text():
+        backup = path.with_name(path.name + ".bak")
+        if backup.exists():
+            # Never replace a previous backup with a different original dataset.
+            index = 1
+            while backup.with_name(backup.name + f".{index}").exists():
+                index += 1
+            backup = backup.with_name(backup.name + f".{index}")
+        shutil.copy2(path, backup)
+        temporary = path.with_name(path.name + ".part")
+        temporary.write_text(content)
+        temporary.replace(path)
     path.with_suffix(".audit.json").write_text(json.dumps(audit_samples(migrated), indent=2))
     return migrated

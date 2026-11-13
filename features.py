@@ -10,7 +10,7 @@ from pathlib import Path
 
 import torch
 
-from dataset import collate_cameras, collate_gain_samples, digest, load_manifest
+from dataset import collate_cameras, collate_gain_samples, digest, load_manifest, require_calibration
 from experiments import select_samples
 from geometry import CAMERA_VERSION
 from model import BACKBONES, LVSM_CHECKPOINT_NAME, LVSM_CHECKPOINT_URL
@@ -99,8 +99,7 @@ def extract_features(samples, output, backbone_factory, backbone_spec, image_siz
     device = resolve_device(device)
     precision = compute_precision(precision, device)
     overall_start = time.perf_counter()
-    if any(not s.context_intrinsics or s.candidate_intrinsics is None for s in samples):
-        raise ValueError("Feature extraction requires calibrated intrinsics. Re-run preprocess.py.")
+    require_calibration(samples)
     root = Path(output)
     if root.suffix == ".pt":
         bundle_path, cache_root = root, root.with_suffix("")
