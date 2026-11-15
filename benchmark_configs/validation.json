@@ -2,8 +2,9 @@
   "schema_version": 1,
   "reference": "fresh-30k",
   "base_iterations": 30000,
-  "objects": ["Table", "LEGO Miss Liberty (small)", "Wave Vase"],
-  "experiments": ["random_3_seed_77", "random_5_seed_77", "random_10_seed_77"],
+  "objects": ["HCR2 superbike (rudolf)", "Crate", "Peanut alien gun"],
+  "experiments": ["random_3_seed_77", "random_15_seed_77", "furthest_4_seed_77", "furthest_14_seed_77",
+                  "trajectory_2_seed_77", "trajectory_12_seed_77"],
   "candidates": [
     {"strategy": "blindspot"},
     {"strategy": "next", "count": 1},
