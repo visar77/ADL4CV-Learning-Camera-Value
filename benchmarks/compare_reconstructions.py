@@ -1,6 +1,5 @@
 """Compare matched reconstruction runs against one unchanged base per context."""
 
-import argparse
 import csv
 import json
 import math
@@ -46,8 +45,9 @@ def timing(reconstruction):
 def candidates(result, allow_incomplete=False):
     output = {}
     for name, reconstruction in result.get("reconstructions", {}).items():
-        index = reconstruction.get("candidate_lattice_index")
-        if index is None or reconstruction.get("status") == "redundant" or name.startswith("redundancy-"):
+        if name in ("base", "base_control") or name.startswith("redundancy-"):
+            continue
+        if reconstruction.get("status") == "redundant":
             continue
         if reconstruction.get("status") != "complete":
             if allow_incomplete:
@@ -55,17 +55,18 @@ def candidates(result, allow_incomplete=False):
             raise ValueError(f"Candidate {name} is not complete")
         if allow_incomplete and name not in result.get("metrics", {}):
             continue
-        if set(reconstruction["train_lattice_indices"]) != set(result["train_lattice_indices"]) | {index}:
+        added_indices = (
+            set(reconstruction["train_lattice_indices"])
+            - set(result["train_lattice_indices"])
+        )
+        if (
+            len(added_indices) != 1
+            or set(reconstruction["train_lattice_indices"])
+            != set(result["train_lattice_indices"]) | added_indices
+        ):
             raise ValueError(f"Candidate {name} does not train on exactly the base views plus its candidate")
-        if index in result["train_lattice_indices"]:
-            raise ValueError(f"Non-redundant candidate {name} is already in the base")
         metric_values(result, name)
-        if index in output:
-            owner = output[index]
-            if reconstruction["reconstruction_path"] != result["reconstructions"][owner]["reconstruction_path"]:
-                raise ValueError(f"Multiple independent runs for candidate index {index}; use separate method IDs")
-        else:
-            output[index] = name
+        output[name] = name
     return output
 
 
@@ -147,13 +148,13 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
                 or set(method["metrics"]["base_control"]["per_view"])
                 != set(reference["metrics"]["base"]["per_view"])):
             raise ValueError("Base-only control cameras/test corpus differ from the matched base")
-    for index in sorted(ref_candidates.keys() & new_candidates.keys()):
-        ref_name, name = ref_candidates[index], new_candidates[index]
+    for candidate_id in sorted(ref_candidates.keys() & new_candidates.keys()):
+        ref_name, name = ref_candidates[candidate_id], new_candidates[candidate_id]
         old, new = reference["reconstructions"][ref_name], method["reconstructions"][name]
         if control and control["iterations"] != new["iterations"]:
             raise ValueError("Base-only control and warm candidate budgets differ")
         if old["train_lattice_indices"] != new["train_lattice_indices"]:
-            raise ValueError(f"Training cameras differ for candidate index {index}")
+            raise ValueError(f"Training cameras differ for candidate {candidate_id}")
         for result, key in ((reference, ref_name), (method, name)):
             provenance = result["metrics_provenance"][key]
             if provenance["test_data_sha256"] != base_provenance["test_data_sha256"]:
@@ -163,7 +164,9 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
         old_cameras = reference["metrics_provenance"][ref_name].get("training_cameras_sha256")
         new_cameras = method["metrics_provenance"][name].get("training_cameras_sha256")
         if not old_cameras or old_cameras != new_cameras:
-            raise ValueError(f"Training camera provenance differs for candidate index {index}")
+            raise ValueError(
+                f"Training camera provenance differs for candidate {candidate_id}"
+            )
         ref_metrics, new_metrics = metric_values(reference, ref_name), metric_values(method, name)
         ref_gain, new_gain = gains(ref_metrics, baseline), gains(new_metrics, baseline)
         ref_seconds, ref_environment = timing(old)
@@ -172,7 +175,7 @@ def compare_context(reference, method, reference_id, method_id, allow_incomplete
             for key in ("gpu_name", "compute_capability", "torch_version", "cuda_version", "hostname"):
                 if ref_environment.get(key) != new_environment.get(key):
                     raise ValueError(f"Timing environments differ ({key}); rerun methods on the same GPU environment")
-        rows.append({"candidate": ref_name, "method_candidate": name, "candidate_lattice_index": index,
+        rows.append({"candidate": ref_name, "method_candidate": name,
                      "reference_seconds": ref_seconds, "method_seconds": new_seconds,
                      "reference_metrics": ref_metrics, "method_metrics": new_metrics,
                      "reference_gain": ref_gain, "method_gain": new_gain,
@@ -219,7 +222,7 @@ def build_report(results_root, reference_id, method_ids=None, allow_incomplete=F
     root = Path(results_root)
     def load_contexts(method):
         records = {}
-        for path in sorted((root / method).glob("*/*/results.json")):
+        for path in sorted((root / method).rglob("results.json")):
             record = json.loads(path.read_text())
             key = (record["object_id"], record["experiment_id"])
             if context_keys is not None and key not in context_keys:
@@ -337,7 +340,7 @@ def write_report(report, output_dir):
     for context in report["comparisons"]:
         for row in context["rows"]:
             record = {key: context[key] for key in ("object_id", "experiment_id", "reference", "method")}
-            record.update({key: row[key] for key in ("candidate", "method_candidate", "candidate_lattice_index", "reference_seconds", "method_seconds")})
+            record.update({key: row[key] for key in ("candidate", "method_candidate", "reference_seconds", "method_seconds")})
             for group in ("reference_metrics", "method_metrics", "reference_gain", "method_gain", "delta_gain"):
                 record.update({f"{group}_{metric}": row[group][metric] for metric in METRICS})
             flat.append(record)
@@ -346,25 +349,3 @@ def write_report(report, output_dir):
         writer.writeheader()
         writer.writerows(flat)
     return text
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results-root", type=Path, required=True, help="Root containing METHOD/OBJECT/EXPERIMENT/results.json")
-    parser.add_argument("--reference", default="fresh-30k")
-    parser.add_argument("--method", action="append")
-    parser.add_argument("--object-id", action="append")
-    parser.add_argument("--experiment-id", action="append")
-    parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--allow-incomplete", action="store_true")
-    args = parser.parse_args(argv)
-    try:
-        report = build_report(args.results_root, args.reference, args.method, args.allow_incomplete,
-                              args.object_id, args.experiment_id)
-    except ValueError as error:
-        parser.error(str(error))
-    print(write_report(report, args.output_dir or args.results_root.parent / "report"), end="")
-
-
-if __name__ == "__main__":
-    main()

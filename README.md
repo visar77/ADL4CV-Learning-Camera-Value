@@ -13,9 +13,8 @@ functionality reference.
 | --- | --- |
 | [renderer.py](renderer.py) | Render an object's complete train/test corpus through Blender. |
 | [orchestrator.py](orchestrator.py) | Optionally render missing corpora, then train base and candidate reconstructions. |
-| [benchmark_reconstructions.py](benchmark_reconstructions.py) | Run matched methods across an object × experiment matrix, evaluate, and report. |
+| [comparison_base_cloud_and_fresh_candidates.py](benchmarks/comparison_base_cloud_and_fresh_candidates.py) | Compare fresh candidate training with 3k-step adaptation from a shared base cloud. |
 | [evaluate_metrics.py](evaluate_metrics.py) | Evaluate saved reconstructions independently of training. |
-| [compare_reconstructions.py](compare_reconstructions.py) | Compare saved, evaluated method results without training or CUDA. |
 | [experiment_viewer.py](experiment_viewer.py) | Visualize an experiment's selected training cameras. |
 
 ## Requirements and setup
@@ -185,237 +184,77 @@ the seeded ring and mark the first/most recent base camera.
 
 ## Matched benchmarking
 
-The benchmark entry points still depend on the removed
-`reconstruction_scripts` package and are pending migration to the simplified
-training/orchestration flow.
+The benchmark entry point is
+[comparison_base_cloud_and_fresh_candidates.py](benchmarks/comparison_base_cloud_and_fresh_candidates.py).
+Its matching configuration is
+[comparison_base_cloud_and_fresh_candidates.json](benchmarks/comparison_base_cloud_and_fresh_candidates.json).
+Each benchmark's generated data is kept in a same-named subfolder under
+[benchmarks/](benchmarks/).
 
-### Protocol and default methods
-
-[benchmark_reconstructions.py](benchmark_reconstructions.py) trains one scratch
-base per object/experiment context and reuses it unchanged across methods:
+The comparison trains a shared base once (30,000 iterations by default), then
+trains each selected candidate in two ways:
 
 | Method | Candidate initialization | Candidate steps |
 | --- | --- | ---: |
-| `fresh-30k` | Scratch | 30000 |
-| `base-cloud-3k` | Trained base PLY with fresh optimizer state | 3000 |
+| `fresh` | Scratch | 30000 |
+| `base-cloud-3k` | The exact shared base PLY, with a fresh optimizer | 3000 |
 
-Both methods train on exactly the base views plus the same one candidate and
-are evaluated on the same test corpus. The shared base uses 30000 steps.
-The default config is
-[benchmark_configs/base_initialization.json](benchmark_configs/base_initialization.json);
-[benchmark_configs/validation.json](benchmark_configs/validation.json) fixes
-the matrix used in the next-steps plan.
+Both candidates use exactly the same base views, added view, and held-out test
+corpus. The report includes absolute PSNR/SSIM/LPIPS, gains over the shared base,
+paired gains versus fresh training, and training times. Candidate rankings and
+selection regret are also reported when the context has multiple candidates.
+Candidates are paired by their deterministic strategy/action IDs (for example
+`random-1`); the benchmark verifies that both runs used the same training
+cameras for each ID.
 
-With `--base-control`, the warm method additionally adapts **base views alone**
-for the same 3000 steps, from the same initializer. It is a separate diagnostic,
-not another candidate or a replacement for the unchanged primary base.
-
-### Selection and configuration
+From `ObjaverseRenderer/`, validate a selected context and run it with:
 
 ```bash
-python benchmark_reconstructions.py \
-  --object-ids "Table" "Wave Vase" \
-  --experiment-ids random_3_seed_77 random_5_seed_77 \
-  --base-control \
-  --output-root benchmarks/example
+python benchmarks/comparison_base_cloud_and_fresh_candidates.py \
+  --object-id "Table" --experiment-id random_3_seed_77 --dry-run
+python benchmarks/comparison_base_cloud_and_fresh_candidates.py \
+  --object-id "Table" --experiment-id random_3_seed_77
 ```
 
-This selects the Cartesian product: four contexts and both default methods.
-The singular `--object-id` and `--experiment-id` flags also accept lists or
-repetition. Duplicate requested IDs are deduplicated; unknown IDs and duplicate
-experiment definitions fail before training. Without CLI filters, config
-`objects`/`experiments` lists apply; without those, all rendered objects and all
-experiment definitions are discovered. CLI filters override the corresponding
-config lists. `--max-contexts N` takes the first N selected contexts;
-`--candidate-limit N` caps distinct non-redundant candidates per context.
+Without filters, the `objects` and `experiments` lists in the matching config
+are selected. The config must list only the experiments you want to run; its
+default experiment is `random_3_seed_77`. Repeat `--object-id` or
+`--experiment-id` to select more than one and override the corresponding config
+list. The script accepts `--views-root`,
+`--experiments-dir`, `--fastgs-dir`, and `--python` when the standard paths
+differ. A dry run validates the selected corpora and prints the planned matrix
+without writing outputs or starting training.
 
-Copy a benchmark config and pass `--config my_config.json` to customize it:
+Edit the matching JSON config to change `base_iterations`,
+`fresh_candidate_iterations`, `adapted_candidate_iterations`, the candidate
+actions, the `objects` and `experiments` lists, and adaptation schedule. The
+benchmark rejects redundant-view controls because they are not candidate
+comparisons. Different settings should use a separately named benchmark script
+and matching config rather than mixing runs in one output folder.
 
-| Top-level field | Meaning |
-| --- | --- |
-| `schema_version` | Must be 1. |
-| `reference` | ID of the scratch reference method. Always included in a selected method set. |
-| `base_iterations` | Shared base training budget. |
-| `objects`, `experiments` | Optional nonempty ID lists. |
-| `candidates` | Required candidate definitions; override every selected experiment's actions. |
-| `adaptation_defaults` | Default warm learning-rate/densification options. |
-| `methods` | At least a scratch reference and one comparison method, each with a unique ID. |
-
-Method fields are `id`, `initialization` (`scratch` or `base`), and `iterations`.
-Optional overrides are `lr_scale`, `densify_from_iter`, `densify_until_iter`,
-`densification_interval`, `extra_gaussians`, `extra_gaussian_seed`,
-`extra_gaussian_jitter`, `extra_gaussian_opacity`, and `extra_gaussian_scale`.
-Method values override `adaptation_defaults`. Extra Gaussians require base
-initialization. Custom scratch budgets or warm settings are supported but are
-not part of the current two-method execution plan. `--method ID` can be repeated
-to select configured methods; it does not define methods absent from the config.
-
-### Warm adaptation behavior
-
-[fastgs_adapter.py](fastgs_adapter.py) imports the selected FastGS implementation
-and runs its losses, rasterizer, model, and densification routines without
-editing or monkey-patching FastGS. It retains trained Gaussians/full SH degree
-but resets optimizer moments and gradient/radius buffers. Position learning-rate
-decay spans the adaptation budget. Default adaptation settings are:
-
-- All configured learning rates scaled by 0.1.
-- Densification starts after step 100, ends at half the budget (exclusive),
-  and is considered every 250 steps. Set `densify_until_iter` to 0 to disable it.
-- Main parameters update each step; SH features every 16 steps and on the final
-  step. Final checkpoints include the final optimization update.
-- Global opacity resets and aggressive late scratch pruning are skipped.
-
-Changing the budget also changes the default decay/densification horizons.
-Both scratch and warm training currently call FastGS `safe_state`, setting
-Python, NumPy, and PyTorch seeds to 0. Independent optimizer seeds are not
-exposed; new output directories repeat timings under the same seeds.
-
-Optional extra Gaussians are written to a separate cached PLY; base rows are
-preserved. Defaults sample anchors uniformly from base Gaussians with seed 77,
-apply covariance-frame jitter 0.5, scale 0.5, inherited appearance/rotation, and
-opacity 0.02. Placement uses no candidate/test RGB. Identical settings share the
-augmented initializer across candidates/budgets. Local extra capacity does not
-explicitly seed entirely unseen surfaces. The default methods add no points.
-
-### Modes, preflight, and paths
-
-The normal benchmark trains, evaluates, and writes reports. These modes are
-mutually exclusive:
-
-| Flag | Behavior |
-| --- | --- |
-| `--dry-run` | Validate inputs and print pending commands; no output writes, GPU loading, or training. FastGS source and corpora are still required. |
-| `--train-only` | Train and save records; defer evaluation/reporting. |
-| `--evaluate-only` | Evaluate saved reconstructions and report; do not train. |
-| `--report-only` | Rebuild reports from saved evaluated records, without GPU or source corpora. |
-
-Before real training/evaluation, preflight checks CUDA availability, FastGS
-imports/API signatures, the KNN CUDA kernel, and fused SSIM forward/backward.
-`environment.json` records the GPU, compute capability, PyTorch/CUDA/Python,
-checkout location, and host. `--gpu-smoke-test` also runs the opt-in CUDA tests;
-`--skip-preflight` disables the preflight, not the need for a valid environment.
-LPIPS may download pretrained weights on first use.
-
-Data/path overrides are `--views-root`, `--experiments-dir`, `--fastgs-dir`,
-`--python`, `--output-root`, and `--base-reconstructions-root`. By default the
-shared bases live under `<output-root>/shared_base`. An external base root must
-contain `<object>/<experiment>/base/point_cloud/iteration_30000/point_cloud.ply`
-for the default budget. PLYs without receipts are accepted only as 30k scratch
-outputs; their original settings/time cannot be verified. New controlled runs
-should create their own shared bases.
-
-### Outputs and resume
+Outputs are written under
+`benchmarks/comparison_base_cloud_and_fresh_candidates/`:
 
 ```text
-<output-root>/
-  benchmark_config.json
-  benchmark_manifest.json
-  environment.json
-  shared_base/<object>/<experiment>/base/...
-  reconstructions/<method>/<object>/<experiment>/<candidate>/...
-  reconstructions/base-cloud-3k/<object>/<experiment>/base_control/...
-  results/<method>/<object>/<experiment>/results.json
-  report/comparison.txt
-  report/comparison.csv
-  report/comparison.json
+methods/<method>/reconstructions/<object>/<experiment>/...
+methods/<method>/results/<object>/<experiment>/results.json
+report/comparison.{json,csv,txt}
+benchmark_config.json
+benchmark_manifest.json
 ```
 
-`base_control/` exists only with the flag; `initializations/<object>/<experiment>/
-<content-hash>/` is created only for custom extra-Gaussian methods. Each training
-directory contains `training_run.json` and
-`point_cloud/iteration_<budget>/point_cloud.ply`. Receipts store completion,
-settings, command, timing, and environment. Result records include protocol,
-initializer provenance, base/candidate camera indices, aliases, status, metrics,
-metric iterations, and evaluation provenance.
+Rerunning the same command reuses complete checkpoints and metrics. Use
+`--retrain` to rebuild checkpoints; changing the saved configuration is
+rejected so that results from different protocols cannot be mixed. Evaluation uses the same test corpus and records checkpoint/camera provenance.
+Rerunning the benchmark with the same configuration reuses completed training
+and evaluation outputs and regenerates the report.
 
-Rerun the **same command and output root**, retaining `--base-control` when used,
-to reuse matching complete reconstructions and metrics. The benchmark checks
-input manifests/images, selected FastGS source files, and warm adapter/initializer
-contents. Setting/input changes invalidate affected runs. Interrupted training
-restarts that reconstruction from its configured initialization, not an
-intermediate checkpoint. `--force-retrain` rebuilds method candidates/controls;
-`--force-base-retrain` rebuilds each shared base once before methods use it.
-`--redo-metrics` reevaluates matching saved outputs.
-
-```bash
-python benchmark_reconstructions.py --output-root benchmarks/example --evaluate-only
-python benchmark_reconstructions.py --output-root benchmarks/example --report-only
-```
-
-Both commands reuse the stored config, selected methods, and **exact recorded
-context pairs**, including partial matrices from `--max-contexts`. Explicit
-object/experiment filters can narrow them. Evaluation-only also restores the
-recorded views root unless overridden; keep experiment definitions available,
-and repeat `--experiments-dir` for a custom directory. Changed corpus inputs
-are rejected. Reports reject mismatched cameras/test corpora, replaced original
-bases, incompatible iterations, and inconsistent recorded timing environments.
-Missing contexts/candidates fail by default. Report-only does not verify live
-checkpoint files or images; it consumes saved metrics/provenance.
-
-Run records contain absolute checkpoint paths. When transferring trained
-outputs for evaluation, preserve those paths or update them consistently,
-including the separately shared bases. For benchmark report-only, copy the
-`results/` tree plus `benchmark_config.json` and `benchmark_manifest.json`;
-checkpoints and source images are unnecessary. Transfer source/data rather
-than compiled CUDA extensions or virtual environments, and use the target
-device's FastGS setup.
-
-### Metrics, controls, and report interpretation
-
-For PSNR/SSIM, gain is candidate minus unchanged base. For LPIPS, gain is
-unchanged base minus candidate, so **positive gain always means improvement**.
-`delta_gain` is method gain minus fresh-reference gain. Negative gains are
-retained; neither adding a view nor warm adaptation guarantees improvement.
-
-The JSON report includes absolute quality, gains, MAE, negative PSNR-gain
-counts, gain-sign agreement, PSNR rank correlation, top-choice agreement,
-selection regret, and training times. The text report summarizes gain changes,
-selection statistics, and timing. The CSV contains one row per distinct matched
-candidate, with absolute scores, primary gains, deltas, camera index, and times.
-With a base-only control, JSON additionally exposes:
-
-- `base_control_metrics`: absolute control quality.
-- `summary.base_control_gain`: control gain over the unchanged base.
-- `rows[].method_gain_over_control`: each warm candidate's gain over the adapted
-  base-only control, with the same positive-is-better convention.
-- `summary.mean_method_gain_over_control`: mean effect beyond that control.
-
-The text report prints control gains and mean candidate effects; these
-additional control fields are not added to the CSV.
-
-Subtracting one shared control does **not** change within-context rankings.
-It helps distinguish new-view effects from further optimization. Controls must
-match the warm candidate budget, base training cameras, and test corpus.
-
-Top-choice agreement is the fraction of warm-best candidates that are also
-fresh-best, equivalent to uniform tie-breaking among warm ties. Selection
-regret is best fresh PSNR gain minus the mean fresh gain of those warm-best
-candidates. Rank correlation is undefined for fewer than two candidates or
-constant ranks. Overall quality/time summaries are candidate-weighted; overall
-top-choice agreement and regret are context-weighted.
-
-Candidate time measures the training subprocess, including startup, loading,
-optimization, and saving. It excludes corpus rendering and separate evaluation.
-Candidate speedup is summed fresh time divided by summed method time. Shared
-base, initializer preparation, and control timings are separate; production
-totals add shared base and initializer preparation but exclude the diagnostic
-control. Cached outputs retain their measured times; unknown timing is `N/A`,
-not zero. Use a **new output root** for a new timing measurement.
-
-Compare evaluated method results directly, independently of the benchmark runner:
-
-```bash
-python compare_reconstructions.py \
-  --results-root benchmarks/example/results \
-  --reference fresh-30k --method base-cloud-3k \
-  --output-dir benchmarks/example/report
-```
-
-`--allow-incomplete` compares available candidate/context intersections and
-reports omissions while still rejecting incompatible provenance. The comparison
-requires `gain_reference=original_base`. Benchmark records with mixed 30k/3k
-iterations need protocol-aware preprocessing before predictor training; do not
-relabel iterations to satisfy an equal-budget importer.
+Positive PSNR/SSIM/LPIPS gain means improvement; LPIPS gain is base minus
+candidate. The comparison's `delta_gain` is adapted gain minus fresh gain, so
+negative values indicate worse gains after adaptation. Training times exclude
+evaluation and rendering. Inspect rendered test images as well as metrics;
+measured speed does not imply acceptable reconstruction quality or equivalent
+fresh-training view-selection fidelity.
 
 ## Orchestration and evaluation
 
@@ -465,8 +304,7 @@ records under the configured results root; add `--redo` to force recomputation.
 | --- | --- |
 | `orchestrator.py`, `orchestrator_config.json` | Dataset discovery, candidate selection, manifests, paths, and experiment execution. |
 | `training_fastgs.py`, `training_config.json` | FastGS scratch/adaptation training launcher and defaults. |
-| `benchmark_config.py` | Benchmark schema validation and method options. |
-| `benchmark_contexts.py` | Matrix selection, input fingerprints, exact saved-context replay. |
+| `benchmarks/` | One executable script per benchmark, matching JSON config, report helpers, and same-named output folders. |
 | `fastgs_adapter.py`, `fastgs_schedule.py` | PLY initialization and the adaptation loop/schedule. |
 | `gaussian_initialization.py` | Optional cached extra-Gaussian initialization. |
 | `sampling.py` | Training lattice, fixed test directions, base/candidate selection. |
@@ -483,12 +321,10 @@ FASTGS_RUN_GPU_TESTS=1 FASTGS_DIR=../FastGS python -m unittest discover \
   -s tests -p test_fastgs_adapter_gpu.py -v
 ```
 
-The CPU suite tests subprocess orchestration with a stand-in trainer, PLY
-manipulation, controls, camera/metric matching, resume/invalidation, manifest
-restoration, matrix selection, and reports. The two CUDA tests are opt-in;
-they test actual adaptation/densification and a tiny train/evaluate/report
-benchmark, including custom extra-point initialization. Passing CPU tests does
-not establish GPU compatibility, reconstruction quality, or measured speedup.
+The CPU suite tests benchmark configuration/input selection, report matching,
+training orchestration, PLY manipulation, and manifest restoration. The CUDA
+adapter test is opt-in. Passing CPU tests does not establish GPU compatibility,
+reconstruction quality, or measured speedup.
 
 The current implementation does not resume intermediate optimization states,
 expose independent optimizer seeds, or create a separate validation split.

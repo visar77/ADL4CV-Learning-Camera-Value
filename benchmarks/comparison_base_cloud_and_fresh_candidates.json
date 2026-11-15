@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "base_iterations": 30000,
+  "fresh_candidate_iterations": 30000,
+  "adapted_candidate_iterations": 3000,
+  "adaptation": {
+    "lr_scale": 0.1,
+    "densify_from_iter": 100,
+    "densification_interval": 250
+  },
+  "objects": [
+    "Crate",
+    "HCR2 superbike (rudolf)"
+  ],
+  "experiments": [
+    "random_3_seed_77",
+    "random_15_seed_77",
+    "furthest_4_seed_77",
+    "furthest_14_seed_77",
+    "trajectory_2_seed_77",
+    "trajectory_12_seed_77"
+  ],
+  "candidates": [
+    {"strategy": "blindspot"},
+    {"strategy": "random", "count": 1},
+    {"strategy": "next", "count": 1}
+  ]
+}

@@ -8,6 +8,5 @@ reconstructions
 reconstructions_*/
 results
 results_*/
-benchmarks/
 __pycache__
 *.zip
