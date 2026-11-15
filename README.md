@@ -33,7 +33,7 @@ repository checkout, including the helper modules, rather than copying a single
 entry-point script.
 
 Blender is needed only to generate or regenerate views. `renderer.py` finds
-`blender` on `PATH`; otherwise set `BLENDER_EXE` in that file. It launches
+`blender` on `PATH`; otherwise set `blender_exe` in `config.json`. It launches
 `blender_worker.py` with `--background --factory-startup --python-exit-code 1`
 and propagates worker failures. Existing rendered corpora need neither Blender
 nor the source GLBs for training or benchmarking.
@@ -58,16 +58,30 @@ an ID or unique substring; duplicate names receive ID suffixes. `--output-dir`,
 `--index`, and `--mapping` override the destination and metadata sources.
 Metadata is streamed/held in memory rather than retained as a local dataset.
 
-Render one object:
+Render one object by passing its GLB explicitly:
 
 ```bash
 python renderer.py --glb-path objects/gamecube.glb --object-id gamecube
 ```
 
-`--output-root` selects a separate corpus root. Renderer settings are constants
-in `renderer.py`: 512 × 512 RGBA PNGs, 100 Fibonacci-lattice training cameras,
-50° horizontal field of view, trajectory elevation 20°, and camera-distance
-scale 1.15. The test set consists of **eight fixed cube-corner directions**,
+`--object-id` is required. If `--glb-path` is omitted, the renderer uses
+`objects_root/<object-id>.glb` from `config.json`:
+
+```bash
+python renderer.py --object-id gamecube
+```
+
+`--output-root` selects a separate corpus root. Edit `config.json` to change
+renderer settings without modifying the scripts. It controls the source-object
+root, output root, Blender executable, image dimensions, lattice size,
+horizontal field of view, trajectory elevation, camera-distance scale,
+blend-file saving, and GPU use. The worker is always `blender_worker.py`.
+Relative config paths are resolved from `ObjaverseRenderer/`. The experiment
+viewer uses the configured output root, lattice size, and trajectory elevation
+(object metadata still takes precedence when available). Defaults produce
+512 × 512 RGBA PNGs and 100 Fibonacci-lattice training cameras, with 50°
+horizontal field of view, trajectory elevation 20°, and camera-distance scale
+1.15. The test set consists of **eight fixed cube-corner directions**,
 independent of the training lattice. The camera points toward the object's
 bounding-box center and uses a distance based on its bounding radius. Cycles
 uses CUDA when available and otherwise falls back to CPU.

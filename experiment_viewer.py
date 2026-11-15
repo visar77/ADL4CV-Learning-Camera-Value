@@ -12,12 +12,11 @@ from sampling import (
     test_view_directions,
     trajectory_path,
 )
+from renderer import CONFIG
 
 ROOT = Path(__file__).resolve().parent
 EXPERIMENTS_DIR = ROOT / "experiments"
-VIEWS_DIR = ROOT / "views"
-DEFAULT_LATTICE_SIZE = 100
-TRAJECTORY_ELEVATION_DEG = 20.0
+VIEWS_DIR = Path(CONFIG["output_root"])
 
 
 def load_experiment(value):
@@ -45,7 +44,7 @@ def resolve_lattice_size(object_id, override):
             with metadata_path.open(encoding="utf-8") as file:
                 metadata = json.load(file)
             return int(metadata["lattice_size"])
-    return DEFAULT_LATTICE_SIZE
+    return CONFIG["lattice_size"]
 
 
 def resolve_trajectory_elevation(object_id):
@@ -57,10 +56,10 @@ def resolve_trajectory_elevation(object_id):
             return float(
                 metadata.get(
                     "trajectory_elevation_deg",
-                    TRAJECTORY_ELEVATION_DEG,
+                    CONFIG["trajectory_elevation_deg"],
                 )
             )
-    return TRAJECTORY_ELEVATION_DEG
+    return CONFIG["trajectory_elevation_deg"]
 
 
 def parse_args():

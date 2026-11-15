@@ -24,7 +24,14 @@ class LightingTests(unittest.TestCase):
             ) as run:
                 with self.assertRaisesRegex(RuntimeError, "worker failed"):
                     renderer.main(
-                        ["--glb-path", str(model), "--output-root", str(root / "out")]
+                        [
+                            "--glb-path",
+                            str(model),
+                            "--object-id",
+                            "asset",
+                            "--output-root",
+                            str(root / "out"),
+                        ]
                     )
             directory = root / "out/asset"
             config = json.loads((directory / "_worker_config.json").read_text())
