@@ -38,6 +38,26 @@ def main(argv=None):
     parser.add_argument("--init-ply", type=Path)
     parser.add_argument("--fastgs-dir", type=Path, default=CONFIG["fastgs_dir"])
     parser.add_argument("--python", default=CONFIG["python"])
+    parser.add_argument(
+        "--adaptation-lr-scale",
+        type=float,
+        default=CONFIG["adaptation_lr_scale"],
+    )
+    parser.add_argument(
+        "--adaptation-densify-from-iter",
+        type=int,
+        default=CONFIG["adaptation_densify_from_iter"],
+    )
+    parser.add_argument(
+        "--adaptation-densify-until-iter",
+        type=int,
+        default=CONFIG.get("adaptation_densify_until_iter"),
+    )
+    parser.add_argument(
+        "--adaptation-densification-interval",
+        type=int,
+        default=CONFIG["adaptation_densification_interval"],
+    )
     args = parser.parse_args(argv)
 
     fastgs_dir = args.fastgs_dir.expanduser().resolve()
@@ -66,13 +86,20 @@ def main(argv=None):
                 "--init_ply",
                 str(init_ply),
                 "--adaptation_lr_scale",
-                str(CONFIG["adaptation_lr_scale"]),
+                str(args.adaptation_lr_scale),
                 "--adaptation_densify_from_iter",
-                str(CONFIG["adaptation_densify_from_iter"]),
+                str(args.adaptation_densify_from_iter),
                 "--adaptation_densification_interval",
-                str(CONFIG["adaptation_densification_interval"]),
+                str(args.adaptation_densification_interval),
             ]
         )
+        if args.adaptation_densify_until_iter is not None:
+            command.extend(
+                [
+                    "--adaptation_densify_until_iter",
+                    str(args.adaptation_densify_until_iter),
+                ]
+            )
     else:
         command.extend(
             [
