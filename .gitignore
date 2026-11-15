@@ -1,4 +1,4 @@
-objects/*glb
+objects/*.glb
 views
 views_*/
 .venv
@@ -10,3 +10,4 @@ results
 results_*/
 benchmarks/
 __pycache__
+*.zip
