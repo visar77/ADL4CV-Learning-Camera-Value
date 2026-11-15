@@ -52,6 +52,7 @@ def evaluate_reconstruction(reconstruction_dir, dataset_dir, train_indices, iter
                 str(iteration),
                 "--source_path",
                 str(dataset_dir),
+                "--eval",
                 "--skip_train",
             ],
             cwd=fastgs_dir,

@@ -105,7 +105,7 @@ def train_adaptation(dataset, opt, pipe, args, fastgs):
                     ema_loss = 0.4 * loss.item() + 0.6 * ema_loss
                     progress.set_postfix(Loss=f"{ema_loss:.7f}")
                     progress.update(iteration - progress.n)
-        summary = {"iterations": opt.iterations, "initialization_ply": str(args.init_ply),
+        summary = {"iterations": opt.iterations,
                    "gaussian_count": gaussians.get_xyz.shape[0],
                    "wall_time_seconds": time.perf_counter() - start,
                    "adaptation": vars(opt)}

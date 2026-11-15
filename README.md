@@ -165,9 +165,8 @@ not training randomness.
 | `redundancy` | Base-view aliases used as controls; excluded from matched candidate comparisons. |
 
 A candidate `count` of 6 means six independent base-plus-one-view actions, not
-one reconstruction adding six views. Names encode strategy, requested count,
-and action number, such as `random-6-4`. Duplicate physical candidate indices
-share one reconstruction_scripts/evaluation and count once. Candidate indices are the
+one reconstruction adding six views. Standalone reconstruction directories use
+strategy and action number, such as `random-4`. Candidate indices are the
 matching identity across methods, not their labels.
 
 View the base cameras without rendering or training:
@@ -185,6 +184,10 @@ overrides size. Candidate cameras are not displayed. Trajectory plots show
 the seeded ring and mark the first/most recent base camera.
 
 ## Matched benchmarking
+
+The benchmark entry points still depend on the removed
+`reconstruction_scripts` package and are pending migration to the simplified
+training/orchestration flow.
 
 ### Protocol and default methods
 
@@ -414,135 +417,61 @@ requires `gain_reference=original_base`. Benchmark records with mixed 30k/3k
 iterations need protocol-aware preprocessing before predictor training; do not
 relabel iterations to satisfy an equal-budget importer.
 
-## Standalone orchestration and evaluation
+## Orchestration and evaluation
 
-Use `orchestrator.py` when generating views or training outside a matched
-benchmark. By default it discovers `.glb` files in `objects/`, renders missing
-corpora, and applies every experiment definition to every object, sequentially.
-It uses scratch initialization and 30000 steps for both base and candidates.
-With `--skip-render`, it discovers existing rendered objects instead.
-
-Standalone defaults are stored in
-[reconstruction_scripts/config.json](reconstruction_scripts/config.json). Edit that file,
-or pass `--config my_config.json` containing only the settings you want to
-change. Precedence is **reconstruction_scripts/config.json → custom config → explicit CLI arguments**.
-JSON keys use underscores, matching the CLI option names (`base_iterations`,
-`skip_render`, `object_id`, etc.); object/experiment selections are arrays.
-CLI selections replace configured arrays. Boolean flags also accept a `--no-`
-form, such as `--no-skip-render`, to override a configured `true` value.
-
-For example, a custom config can contain:
-
-```json
-{
-  "skip_render": true,
-  "object_id": ["gamecube", "chair"],
-  "experiment_id": ["random_3_seed_77"],
-  "base_iterations": 30000
-}
-```
-
-```bash
-python orchestrator.py --config my_config.json --base-iterations 15000
-```
-
-Paths in JSON resolve relative to the file that defines them; CLI paths resolve
-relative to the working directory. The bundled config uses `../views`,
-`../objects`, and similar paths to retain repository-level data/output roots;
-FastGS remains at `../../FastGS` relative to that config.
-`python: null` uses the running interpreter.
-Other `null` defaults retain automatic discovery/derived behavior:
-`candidate_iterations` uses the base budget in scratch mode or the config-only
-`base_candidate_iterations` (3000) in warm mode; densification end uses half the
-candidate budget; run name and auxiliary roots follow the rules below.
-Unknown keys, invalid types, and invalid option combinations fail before work starts.
-The benchmark's `--config` continues to select its separate benchmark schema.
+`orchestrator.py` reads its data/output paths from
+[orchestrator_config.json](orchestrator_config.json). Paths are relative to
+`ObjaverseRenderer/`. It discovers all GLBs and experiments when their IDs are
+omitted, rendering missing corpora automatically.
 
 ```bash
 python orchestrator.py \
-  --skip-render --object-ids gamecube chair \
-  --experiment-ids random_3_seed_77 --continue-on-error
+  --object-id gamecube \
+  --experiment_id random_3_seed_77 \
+  --candidate_id random-1
 ```
 
-Outputs default to `reconstructions/<object>/<experiment>/<base-or-candidate>/`
-and `results/<object>/<experiment>/results.json`. A complete matching receipt
-and final PLY enable reconstruction-level resume; 30k scratch PLYs without
-receipts are also accepted. `--continue-on-error` continues after experiment
-failures. `--rerender` forces corpus regeneration; `--force-retrain` forces run
-reconstructions, while `--force-base-retrain` controls shared initializers.
+The supported switches are `--retrain`, `--rerender`,
+`--use-candidate-base [base-3k]`, `--evaluate_metrics`, and `--redo`. Existing
+reconstructions are reused unless `--retrain` is specified; missing or
+incomplete reconstructions are trained. `--rerender` forces corpus generation.
+Candidate-base mode trains/reuses the regular `base/` reconstruction, then
+adapts candidates for 3k steps from its PLY. If `base/` is missing, it is trained
+first; a candidate-only run does not retrain an existing base. If
+`base_cloud_ply` is set in `orchestrator_config.json`, that external PLY is used
+directly instead and is never copied into the output tree or recorded in result
+files. Without candidate-base mode, each candidate trains from scratch.
 
-Standalone warm adaptation:
+The result layout is:
 
-```bash
-python orchestrator.py \
-  --skip-render --object-ids gamecube --experiment-ids random_3_seed_77 \
-  --candidate-initialization base --candidate-iterations 3000 \
-  --run-name base-cloud-3k --base-control
+```text
+reconstructions/<object-id>/<experiment-id>/
+  base/
+  random-1/
+  next-1/
+  ...
+results/<object-id>/<experiment-id>/results.json
 ```
 
-`--base-iterations` defaults to 30000. `--candidate-iterations` defaults to 3000
-for base initialization, otherwise the base budget. `--run-name` adds an output
-namespace; warm mode generates `base_init_<budget>` when omitted. Shared bases
-remain outside that namespace. `--shared-base` enables shared bases for scratch
-runs too. `--gain-reference original-base` is the default;
-`equal-budget-base-control` changes the standalone gain reference and is not
-accepted by the matched reporter.
-
-Standalone overrides include `--views-root`, `--objects-root`,
-`--experiments-dir`, `--reconstructions-root`, `--results-root`,
-`--base-reconstructions-root`, `--initializations-root`, `--fastgs-dir`, and
-`--python`. Adaptation uses `--adaptation-lr-scale`,
-`--adaptation-densify-from-iter`, `--adaptation-densify-until-iter`, and
-`--adaptation-densification-interval`. Extra-point options are
-`--extra-gaussians`, `--extra-gaussian-seed`, `--extra-gaussian-jitter`,
-`--extra-gaussian-opacity`, and `--extra-gaussian-scale`. `--candidate-limit`
-and `--dry-run` support small/read-only checks; inspect `--help` for all options.
-
-The scratch subprocess uses `--eval --optimizer_type default`, densification
-interval 500, absolute gradient threshold 0.0012, and a final save at its budget.
-Training-time evaluation is off (`--test_iterations -1` for scratch);
-`--evaluate-during-training` enables final-step evaluation. The benchmark keeps
-evaluation separate.
-
-Evaluate standalone outputs later:
-
-```bash
-python evaluate_metrics.py \
-  --object-id gamecube --experiment-id random_3_seed_77
-```
-
-The evaluator reads reconstruction camera indices, temporarily exposes the
-manifests, runs FastGS rendering and PSNR/SSIM/LPIPS evaluation, and writes
-per-view scores and averages under `metrics[<reconstruction-name>]`.
-`metrics_iterations` records the budget for each reconstruction;
-`metrics_provenance` identifies checkpoint bytes, training cameras, test
-images/cameras, evaluator code, and iteration. The scalar `metrics_iteration`
-is retained only while evaluated budgets agree. By default, each reconstruction's
-recorded final iteration is used. An explicit `--iteration` overrides all of them.
-
-`--results-root` selects another results tree; `--views-root` overrides dataset
-locations. `--reconstructions-root` expects an object/experiment/run directory
-layout and is useful for relocated standalone outputs; benchmark shared bases
-need their own correct recorded paths. `--redo` forces evaluation; compatible
-cached evaluations are reused and duplicate aliases are evaluated once. Without
-filters, all result records under the chosen root are considered.
+FastGS locations, training budgets, and the small set of optimizer defaults
+are in [training_config.json](training_config.json). `training_fastgs.py` uses
+FastGS's native trainer for scratch training and the FastGS adapter for
+PLY-initialized training. Add `--evaluate_metrics` to evaluate all result
+records under the configured results root; add `--redo` to force recomputation.
 
 ## Implementation layout
 
 | Module | Responsibility |
 | --- | --- |
-| `reconstruction_scripts/config.json`, `reconstruction_scripts/config.py` | Standalone defaults, CLI overrides, validation, and path resolution. |
-| `reconstruction_scripts/datasets.py` | Corpus discovery, experiment loading, view selection, temporary manifests. |
-| `reconstruction_scripts/training.py` | FastGS commands, training specs, receipts, completion checks. |
-| `reconstruction_scripts/experiments.py` | Shared initializers, candidate planning, result records, experiment execution. |
-| `reconstruction_scripts/io.py` | Atomic JSON records and content hashes. |
+| `orchestrator.py`, `orchestrator_config.json` | Dataset discovery, candidate selection, manifests, paths, and experiment execution. |
+| `training_fastgs.py`, `training_config.json` | FastGS scratch/adaptation training launcher and defaults. |
 | `benchmark_config.py` | Benchmark schema validation and method options. |
 | `benchmark_contexts.py` | Matrix selection, input fingerprints, exact saved-context replay. |
 | `fastgs_adapter.py`, `fastgs_schedule.py` | PLY initialization and the adaptation loop/schedule. |
 | `gaussian_initialization.py` | Optional cached extra-Gaussian initialization. |
 | `sampling.py` | Training lattice, fixed test directions, base/candidate selection. |
 
-Generated objects, corpora, reconstruction_scripts/results trees, benchmark outputs,
+Generated objects, corpora, reconstruction/results trees, benchmark outputs,
 and Python caches are excluded by `.gitignore` for the standard output names.
 
 ## Verification and limits

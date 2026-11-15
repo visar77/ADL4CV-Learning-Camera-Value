@@ -1,84 +1,425 @@
-"""Render shared views and run independent FastGS reconstruction experiments."""
+"""Render datasets and train selected FastGS reconstructions."""
 
+import argparse
+from contextlib import contextmanager
+import json
+from pathlib import Path
+import shutil
 import subprocess
 import sys
 
-from reconstruction_scripts.config import parse_args
-from reconstruction_scripts.datasets import discover_objects, load_experiments
-from reconstruction_scripts.experiments import process_experiment
-from reconstruction_scripts.io import ROOT, load_json
-from sampling import fibonacci_lattice
+from sampling import (
+    candidate_configurations,
+    fibonacci_lattice,
+    select_candidate_indices,
+    select_indices,
+)
+from training_fastgs import CONFIG as TRAINING_CONFIG
 
 
-def prepare_object(args, object_id):
-    """Render missing views, then load the immutable global camera corpus."""
-    object_dir = args.views_root / object_id
-    global_dir = object_dir / "global_transforms"
-    missing = any(
-        not (global_dir / f"transforms_{split}.json").is_file()
-        for split in ("train", "test")
+ROOT = Path(__file__).resolve().parent
+CONFIG_PATH = ROOT / "orchestrator_config.json"
+TRAINER = ROOT / "training_fastgs.py"
+RENDERER = ROOT / "renderer.py"
+EVALUATOR = ROOT / "evaluate_metrics.py"
+PYTHON = TRAINING_CONFIG["python"]
+
+
+def load_config():
+    with CONFIG_PATH.open(encoding="utf-8") as file:
+        config = json.load(file)
+    if not isinstance(config, dict):
+        raise ValueError(f"Orchestrator config must be a JSON object: {CONFIG_PATH}")
+
+    for key in (
+        "objects_root",
+        "views_root",
+        "experiments_dir",
+        "reconstructions_root",
+        "results_root",
+    ):
+        config[key] = (ROOT / config[key]).resolve()
+    if config.get("base_cloud_ply") is not None:
+        config["base_cloud_ply"] = (ROOT / config["base_cloud_ply"]).resolve()
+    return config
+
+
+CONFIG = load_config()
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--object-id", "--object_id")
+    parser.add_argument("--experiment-id", "--experiment_id")
+    parser.add_argument("--candidate-id", "--candidate_id")
+    parser.add_argument("--retrain", action="store_true")
+    parser.add_argument("--rerender", action="store_true")
+    parser.add_argument(
+        "--use-candidate-base",
+        "--use_candidate_base",
+        nargs="?",
+        const="base-3k",
+        choices=("base-3k",),
+        help="Train/use the shared 3k base for candidate reconstructions.",
     )
-    if not args.skip_render and (args.rerender or missing):
-        if args.dry_run:
-            raise ValueError(
-                "Render views before a dry run, or use --skip-render with an existing corpus"
-            )
-        glb_path = args.objects_root / f"{object_id}.glb"
+    parser.add_argument(
+        "--evaluate_metrics",
+        "--evaluate-metrics",
+        action="store_true",
+        help="Evaluate all reconstructions in the configured results root.",
+    )
+    parser.add_argument("--redo", action="store_true", help="Redo metric evaluation.")
+    return parser
+
+
+def load_experiments(requested_id=None):
+    experiments = {}
+    for path in sorted(CONFIG["experiments_dir"].glob("*.json")):
+        with path.open(encoding="utf-8") as file:
+            experiment = json.load(file)
+        if not isinstance(experiment, dict) or not isinstance(
+            experiment.get("train"), dict
+        ):
+            raise ValueError(f"Invalid experiment definition: {path}")
+        identifier = experiment.setdefault("id", path.stem)
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or identifier in (".", "..")
+            or Path(identifier).name != identifier
+        ):
+            raise ValueError(f"Invalid experiment ID in {path}: {identifier!r}")
+        if identifier in experiments:
+            raise ValueError(f"Duplicate experiment ID: {identifier}")
+        experiments[identifier] = experiment
+
+    if requested_id is not None:
+        if requested_id not in experiments:
+            raise ValueError(f"Unknown experiment ID: {requested_id}")
+        return [experiments[requested_id]]
+    if not experiments:
+        raise FileNotFoundError(f"No experiments found in {CONFIG['experiments_dir']}")
+    return list(experiments.values())
+
+
+def discover_objects(requested_id=None):
+    if requested_id is not None:
+        if not requested_id or Path(requested_id).name != requested_id:
+            raise ValueError("Object ID must be a single directory name")
+        return [requested_id]
+    return sorted(path.stem for path in CONFIG["objects_root"].glob("*.glb"))
+
+
+def load_json(path):
+    with path.open(encoding="utf-8") as file:
+        return json.load(file)
+
+
+def save_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def ensure_views(object_id, rerender):
+    object_dir = CONFIG["views_root"] / object_id
+    global_dir = object_dir / "global_transforms"
+    train_manifest = global_dir / "transforms_train.json"
+    test_manifest = global_dir / "transforms_test.json"
+    if rerender or not (train_manifest.is_file() and test_manifest.is_file()):
+        glb_path = CONFIG["objects_root"] / f"{object_id}.glb"
         if not glb_path.is_file():
-            raise FileNotFoundError(glb_path)
+            raise FileNotFoundError(f"GLB not found for {object_id}: {glb_path}")
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "renderer.py"),
+                str(RENDERER),
                 "--glb-path",
                 str(glb_path),
                 "--object-id",
                 object_id,
                 "--output-root",
-                str(args.views_root),
+                str(CONFIG["views_root"]),
             ],
             check=True,
         )
-    train = load_json(global_dir / "transforms_train.json")
-    load_json(global_dir / "transforms_test.json")
-    return object_dir, train
+    if not (train_manifest.is_file() and test_manifest.is_file()):
+        raise FileNotFoundError(f"Rendered train/test manifests not found: {global_dir}")
+    return object_dir, load_json(train_manifest)
+
+
+@contextmanager
+def training_manifests(object_dir, global_train, global_test, indices):
+    paths = [object_dir / f"transforms_{split}.json" for split in ("train", "test")]
+    previous = {path: path.read_bytes() if path.is_file() else None for path in paths}
+    try:
+        train = {
+            "camera_angle_x": global_train["camera_angle_x"],
+            "frames": [dict(global_train["frames"][index]) for index in indices],
+        }
+        paths[0].write_text(json.dumps(train, indent=2), encoding="utf-8")
+        paths[1].write_text(json.dumps(global_test, indent=2), encoding="utf-8")
+        yield
+    finally:
+        for path, content in previous.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(content)
+
+
+def checkpoint_path(model_dir, iterations):
+    return model_dir / "point_cloud" / f"iteration_{iterations}" / "point_cloud.ply"
+
+
+def safely_remove_output(path):
+    if path.is_symlink():
+        raise ValueError(f"Refusing to remove symlink output: {path}")
+    path = path.resolve()
+    root = CONFIG["reconstructions_root"].resolve()
+    if path == root or root not in path.parents:
+        raise ValueError(f"Refusing to remove output outside reconstruction root: {path}")
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def run_training(object_dir, model_dir, indices, iterations, init_ply, retrain):
+    expected = checkpoint_path(model_dir, iterations)
+    if expected.is_file() and not retrain:
+        return expected
+
+    if model_dir.exists():
+        safely_remove_output(model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    arguments = [
+        PYTHON,
+        str(TRAINER),
+        "--source-path",
+        str(object_dir),
+        "--model-path",
+        str(model_dir),
+        "--iterations",
+        str(iterations),
+        "--fastgs-dir",
+        str(TRAINING_CONFIG["fastgs_dir"]),
+    ]
+    if init_ply is not None:
+        arguments.extend(["--init-ply", str(init_ply)])
+    with training_manifests(
+        object_dir,
+        load_json(object_dir / "global_transforms/transforms_train.json"),
+        load_json(object_dir / "global_transforms/transforms_test.json"),
+        indices,
+    ):
+        subprocess.run(arguments, check=True)
+    if not expected.is_file():
+        raise RuntimeError(f"FastGS did not write the expected checkpoint: {expected}")
+    return expected
+
+
+def make_candidate_jobs(experiment, lattice, base_indices, trajectory_elevation):
+    train = experiment["train"]
+    seed = int(train.get("seed", 0))
+    configurations = candidate_configurations(experiment.get("candidates"))
+    jobs = []
+    seen = set()
+    for strategy, count in configurations:
+        indices = select_candidate_indices(
+            strategy,
+            count,
+            lattice,
+            base_indices,
+            seed=seed,
+            train_strategy=train["strategy"],
+            trajectory_elevation_deg=trajectory_elevation,
+        )
+        for action, candidate_index in enumerate(indices, start=1):
+            candidate_id = f"{strategy}-{action}"
+            if candidate_id in seen:
+                raise ValueError(
+                    f"Candidate IDs are ambiguous in {experiment['id']}: {candidate_id}"
+                )
+            seen.add(candidate_id)
+            candidate_train_indices = (
+                list(base_indices)
+                if strategy == "redundancy"
+                else [*base_indices, candidate_index]
+            )
+            jobs.append(
+                {
+                    "id": candidate_id,
+                    "strategy": strategy,
+                    "train_indices": candidate_train_indices,
+                    "status": "redundant" if strategy == "redundancy" else "pending",
+                }
+            )
+    return jobs
+
+
+def run_experiment(object_id, object_dir, global_train, experiment, args):
+    experiment_id = experiment["id"]
+    base_dir = CONFIG["reconstructions_root"] / object_id / experiment_id
+    result_path = CONFIG["results_root"] / object_id / experiment_id / "results.json"
+    metadata_path = object_dir / "metadata.json"
+    metadata = load_json(metadata_path) if metadata_path.is_file() else {}
+    lattice_size = int(metadata.get("lattice_size", len(global_train["frames"])))
+    if lattice_size != len(global_train["frames"]):
+        raise ValueError(
+            f"Lattice metadata ({lattice_size}) does not match rendered train frames "
+            f"({len(global_train['frames'])}) for {object_id}"
+        )
+    lattice = fibonacci_lattice(lattice_size)
+    train = experiment["train"]
+    seed = int(train.get("seed", 0))
+    trajectory_elevation = float(metadata.get("trajectory_elevation_deg", 20.0))
+    base_indices = select_indices(
+        train["strategy"],
+        int(train["count"]),
+        lattice,
+        seed=seed,
+        trajectory_elevation_deg=trajectory_elevation,
+    )
+    candidates = make_candidate_jobs(
+        experiment, lattice, base_indices, trajectory_elevation
+    )
+    if args.candidate_id is not None:
+        candidate_ids = {candidate["id"] for candidate in candidates}
+        if args.candidate_id not in candidate_ids:
+            raise ValueError(
+                f"Unknown candidate ID {args.candidate_id!r} in {object_id}/{experiment_id}; "
+                f"available: {', '.join(sorted(candidate_ids))}"
+            )
+        candidates = [
+            item for item in candidates if item["id"] == args.candidate_id
+        ]
+
+    base_iterations = int(TRAINING_CONFIG["base_iterations"])
+    base_model_dir = base_dir / "base"
+    base_ply = checkpoint_path(base_model_dir, base_iterations)
+    uses_internal_base = (
+        args.use_candidate_base is not None and CONFIG["base_cloud_ply"] is None
+    )
+    run_base = (
+        args.candidate_id is None
+        or any(candidate["status"] == "redundant" for candidate in candidates)
+        or (uses_internal_base and not base_ply.is_file())
+    )
+    result = {
+        "object_id": object_id,
+        "experiment_id": experiment_id,
+        "dataset_path": str(object_dir),
+        "reconstructions": {},
+    }
+    if result_path.is_file():
+        previous = load_json(result_path)
+        if (
+            previous.get("object_id") == object_id
+            and previous.get("experiment_id") == experiment_id
+        ):
+            result["reconstructions"].update(previous.get("reconstructions", {}))
+    if run_base:
+        run_training(
+            object_dir,
+            base_model_dir,
+            base_indices,
+            base_iterations,
+            None,
+            args.retrain if args.candidate_id is None else False,
+        )
+    if run_base or (uses_internal_base and base_ply.is_file()):
+        result["reconstructions"]["base"] = {
+            "status": "complete",
+            "iterations": base_iterations,
+            "reconstruction_path": str(base_model_dir),
+            "train_lattice_indices": base_indices,
+        }
+
+    candidate_base_ply = None
+    candidate_iterations = int(TRAINING_CONFIG["candidate_iterations"])
+    if args.use_candidate_base:
+        candidate_iterations = int(TRAINING_CONFIG["candidate_base_iterations"])
+        if CONFIG["base_cloud_ply"] is not None:
+            candidate_base_ply = CONFIG["base_cloud_ply"]
+            if not candidate_base_ply.is_file():
+                raise FileNotFoundError(
+                    f"Configured base cloud not found: {candidate_base_ply}"
+                )
+        else:
+            if not base_ply.is_file():
+                raise RuntimeError(f"Base reconstruction is missing its PLY: {base_ply}")
+            candidate_base_ply = base_ply
+
+    save_json(result_path, result)
+
+    for candidate in candidates:
+        candidate_id = candidate["id"]
+        if candidate["status"] == "redundant":
+            result["reconstructions"][candidate_id] = {
+                "status": "redundant",
+                "iterations": base_iterations,
+                "reconstruction_path": str(base_model_dir),
+                "train_lattice_indices": candidate["train_indices"],
+            }
+            save_json(result_path, result)
+            continue
+
+        model_dir = base_dir / candidate_id
+        if model_dir == base_model_dir:
+            raise ValueError(f"Candidate ID conflicts with reserved path: {candidate_id}")
+        checkpoint = run_training(
+            object_dir,
+            model_dir,
+            candidate["train_indices"],
+            candidate_iterations,
+            candidate_base_ply,
+            args.retrain,
+        )
+        result["reconstructions"][candidate_id] = {
+            "status": "complete",
+            "iterations": candidate_iterations,
+            "reconstruction_path": str(model_dir),
+            "checkpoint_path": str(checkpoint),
+            "train_lattice_indices": candidate["train_indices"],
+        }
+        save_json(result_path, result)
+
+
+def evaluate_all(redo, object_id=None, experiment_id=None):
+    command = [
+        PYTHON,
+        str(EVALUATOR),
+        "--results-root",
+        str(CONFIG["results_root"]),
+        "--fastgs-dir",
+        str(TRAINING_CONFIG["fastgs_dir"]),
+        "--python",
+        PYTHON,
+    ]
+    if object_id is not None:
+        command.extend(["--object-id", object_id])
+    if experiment_id is not None:
+        command.extend(["--experiment-id", experiment_id])
+    if redo:
+        command.append("--redo")
+    subprocess.run(command, check=True)
 
 
 def main(argv=None):
-    args = parse_args(argv)
-    print(
-        f"Reconstructions: {args.reconstructions_root}\nResults: {args.results_root}",
-        flush=True,
-    )
-    if args.object_id is not None:
-        # Explicit IDs may refer to rendered corpora even when the GLBs are absent.
-        object_ids = list(dict.fromkeys(args.object_id))
-        if any(not name or name in (".", "..") or "/" in name for name in object_ids):
-            raise ValueError("Object IDs must be single directory names")
-    else:
-        directory = args.views_root if args.skip_render else args.objects_root
-        object_ids = discover_objects(directory, rendered=args.skip_render)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    object_ids = discover_objects(args.object_id)
     if not object_ids:
-        raise FileNotFoundError(
-            "No objects found; specify --object-id and check --views-root/--objects-root"
-        )
-    experiments = load_experiments(args.experiments_dir, args.experiment_id)
+        raise FileNotFoundError(f"No GLBs found in {CONFIG['objects_root']}")
+    experiments = load_experiments(args.experiment_id)
+
     for object_id in object_ids:
-        object_dir, train = prepare_object(args, object_id)
-        lattice = fibonacci_lattice(len(train["frames"]))
+        object_dir, global_train = ensure_views(object_id, args.rerender)
         for experiment in experiments:
-            try:
-                process_experiment(
-                    args, object_id, object_dir, train, lattice, experiment
-                )
-            except Exception as error:
-                print(
-                    f"Failed {object_id}/{experiment['id']}: {error}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                if not args.continue_on_error:
-                    raise
+            run_experiment(object_id, object_dir, global_train, experiment, args)
+
+    if args.evaluate_metrics:
+        evaluate_all(args.redo, args.object_id, args.experiment_id)
 
 
 if __name__ == "__main__":
