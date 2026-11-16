@@ -141,6 +141,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                    duplicates="mean") -> list[GainSample]:
     samples = []
     skipped_candidates = []
+    approximated_redundancy_candidates = []
     result_files = sorted(results_root.rglob("results.json"))
     if not result_files:
         raise ValueError(
@@ -161,6 +162,16 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                 context_indices = base_reconstruction.get("train_lattice_indices")
             if context_indices is None:
                 raise ValueError(f"Missing base training camera indices in {results_path}")
+            if not context_indices:
+                raise ValueError(f"Base training camera indices are empty in {results_path}")
+            redundancy_ids = sorted(
+                candidate_id for candidate_id, candidate in reconstructions.items()
+                if candidate_id != "base" and candidate.get("status") == "redundant"
+            )
+            redundancy_camera_indices = {
+                candidate_id: context_indices[index % len(context_indices)]
+                for index, candidate_id in enumerate(redundancy_ids)
+            }
             # Lattice indices always refer to the global manifest, never a temporary subset.
             transforms_path = view_dir / "global_transforms" / "transforms_train.json"
             if not transforms_path.is_file():
@@ -194,29 +205,42 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                         if len(added_indices) == 1:
                             index = added_indices.pop()
                         elif not added_indices and candidate.get("status") == "redundant":
-                            skipped_candidates.append({
+                            index = redundancy_camera_indices[candidate_id]
+                            approximated_redundancy_candidates.append({
                                 "source_results": relative_path(results_path, output.parent),
                                 "candidate_id": str(candidate_id),
-                                "reason": "redundant result has no distinct candidate camera index",
+                                "candidate_lattice_index": int(index),
+                                "reason": "candidate index missing; assigned a context camera as its redundant pose",
                             })
-                            continue
                         else:
                             raise ValueError(
                                 f"Expected one added camera for {candidate_id} in {results_path}; "
                                 f"found {len(added_indices)}."
                             )
+                    elif candidate.get("status") == "redundant":
+                        index = redundancy_camera_indices[candidate_id]
+                        approximated_redundancy_candidates.append({
+                            "source_results": relative_path(results_path, output.parent),
+                            "candidate_id": str(candidate_id),
+                            "candidate_lattice_index": int(index),
+                            "reason": "candidate index missing; assigned a context camera as its redundant pose",
+                        })
                 if index is None:
                     raise ValueError(f"Missing candidate camera index for {candidate_id} in {results_path}")
                 _, pose, intrinsics = camera(index)
                 value = float(metric["PSNR"])
                 if not math.isfinite(value):
                     raise ValueError(f"Non-finite candidate PSNR in {results_path}")
+                is_redundant = candidate.get("status") == "redundant"
+                gain = 0.0 if is_redundant else (value - base) / abs(base)
+                candidate_psnr = base if is_redundant else value
                 sample = GainSample(scene_id, str(raw["experiment_id"]), str(candidate_id),
                                     tuple(c[0] for c in context), tuple(c[1] for c in context),
-                                    pose, (value - base) / abs(base), relative_path(results_path, output.parent),
-                                    base, value, tuple(c[2] for c in context), intrinsics,
+                                    pose, gain, relative_path(results_path, output.parent),
+                                    base, candidate_psnr, tuple(c[2] for c in context), intrinsics,
                                     payload.get("camera_convention", "blender"),
-                                    "redundancy_control" if candidate.get("status") == "redundant" else "retrained",
+                                    "redundancy_control" if is_redundant else "retrained",
+                                    observed_gains=(0.0,) if is_redundant else (),
                                     path_base="manifest", path_root=output.resolve().parent)
                 samples.append(sample)
     if not samples:
@@ -225,6 +249,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                          "An existing JSONL can instead be calibrated with --upgrade; labels are preserved.")
     report = audit_samples(samples)
     report["skipped_candidates"] = skipped_candidates
+    report["approximated_redundancy_candidates"] = approximated_redundancy_candidates
     if duplicates == "mean":
         samples = deduplicate_samples(samples)
     elif duplicates != "keep":
