@@ -1,0 +1,4 @@
+[submodule "FastGS"]
+	path = FastGS
+	url = https://github.com/visar77/FastGS.git
+	branch = main
