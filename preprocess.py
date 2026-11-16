@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from dataset import preprocess_samples, relativize_manifest, upgrade_manifest
@@ -58,7 +59,11 @@ def main(argv=None) -> None:
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     print(f"Saved {len(samples)} samples to {args.output}")
-    print(f"Audit: {args.output.with_suffix('.audit.json')}")
+    audit_path = args.output.with_suffix(".audit.json")
+    skipped = json.loads(audit_path.read_text()).get("skipped_candidates", [])
+    if skipped:
+        print(f"Skipped {len(skipped)} candidates without a distinct camera index; see the audit.")
+    print(f"Audit: {audit_path}")
 
 
 if __name__ == "__main__":

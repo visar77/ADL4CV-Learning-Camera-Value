@@ -62,7 +62,55 @@ Records contain the context, candidate camera, and signed relative PSNR gain:
 (candidate PSNR - base PSNR) / abs(base PSNR)
 ```
 
-Redundancy controls are retained and marked as copied base metrics. Repeated identical capture actions are averaged, preserving their original gain observations and source IDs. `--duplicates keep` preserves separate records; pass it to training too when studying raw observations. The audit reports duplicate spread and negative gains. Labels describe retraining reconstructions from scratch; they can be negative.
+Redundancy controls are retained when their candidate camera index is present. If a result has no distinct camera index for a redundant candidate, it is skipped and recorded in the audit. Repeated identical capture actions are averaged, preserving their original gain observations and source IDs. `--duplicates keep` preserves separate records; pass it to training too when studying raw observations. The audit reports duplicate spread and negative gains. Labels describe retraining reconstructions from scratch; they can be negative.
+
+#### Use the full Crate reconstruction
+
+The Crate results store context indices under `reconstructions.base` and each added camera in the candidate's `train_lattice_indices`. The preprocessor reads that format and derives the one added index. Run from this directory:
+
+```bash
+python preprocess.py \
+  --results-root ../ObjaverseRenderer/results/Crate \
+  --views-root ../ObjaverseRenderer/views \
+  --output data/processed/crate_all.jsonl
+```
+
+This scans all experiment subdirectories under `results/Crate`; the camera images/transforms come from `views/Crate`. The Crate redundancy entries do not identify which existing camera was selected, so those entries cannot be assigned a candidate pose and are listed as skipped in `crate_all.audit.json`. The other candidate labels use the PSNR values recorded in each `results.json` directly:
+
+```text
+(candidate PSNR - base PSNR) / abs(base PSNR)
+```
+
+Start with a same-object, held-out-context run and a fast geometry baseline:
+
+```bash
+python train.py --dataset data/processed/crate_all.jsonl --scene-id Crate \
+  --model geometry --mode context --epochs 100 \
+  --output checkpoints/crate_geometry/model.pt \
+  --log-dir runs/crate_geometry
+```
+
+Use the toy CNN to include the context RGB images:
+
+```bash
+python train.py --dataset data/processed/crate_all.jsonl --scene-id Crate \
+  --model toy --mode context --epochs 100 \
+  --output checkpoints/crate_toy/model.pt \
+  --log-dir runs/crate_toy
+```
+
+The default context split keeps all candidates from one physical context together. This evaluates generalization to held-out Crate contexts, not to unseen objects. For cached LVSM-head training, first extract features for this manifest with `features.py`, then pass the resulting `features.pt` to `train.py --model cached`; this is substantially more compute-intensive.
+
+Evaluate or rank predictions for a recorded experiment:
+
+```bash
+python evaluate.py --checkpoint checkpoints/crate_geometry/model.pt --split test
+python inference.py --checkpoint checkpoints/crate_geometry/model.pt \
+  --dataset data/processed/crate_all.jsonl --scene-id Crate \
+  --experiment-id random_5_seed_77 --rank
+```
+
+The second command is an offline comparison against recorded candidate labels. For a new, unmeasured camera, use `inference.py --input` with a request containing the Crate context images and calibrated camera poses; the bundled `examples/inference_request.json` is for Table and is not the Crate request.
 
 `table_v2.jsonl` was an example filename, not a separate dataset. Regenerated manifests include calibration, redundancy controls, and duplicate provenance: currently 119 unique Table records (100 candidate runs + 20 controls − one duplicate).
 

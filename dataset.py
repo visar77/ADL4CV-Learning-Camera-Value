@@ -140,6 +140,7 @@ def _intrinsics(payload, frame, image_path=None, *, image_size=None):
 def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=None,
                    duplicates="mean") -> list[GainSample]:
     samples = []
+    skipped_candidates = []
     result_files = sorted(results_root.rglob("results.json"))
     if not result_files:
         raise ValueError(
@@ -153,6 +154,13 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
         for raw in _records(results_path):
             scene_id = str(raw["object_id"])
             view_dir = views_root / scene_id
+            reconstructions = raw.get("reconstructions", {})
+            base_reconstruction = reconstructions.get("base", {})
+            context_indices = raw.get("train_lattice_indices")
+            if context_indices is None:
+                context_indices = base_reconstruction.get("train_lattice_indices")
+            if context_indices is None:
+                raise ValueError(f"Missing base training camera indices in {results_path}")
             # Lattice indices always refer to the global manifest, never a temporary subset.
             transforms_path = view_dir / "global_transforms" / "transforms_train.json"
             if not transforms_path.is_file():
@@ -168,7 +176,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                     raise FileNotFoundError(image_path)
                 pose = tuple(float(v) for row in frame["transform_matrix"] for v in row)
                 return relative_path(image_path, output.parent), pose, _intrinsics(payload, frame, image_path)
-            context = [camera(i) for i in raw["train_lattice_indices"]]
+            context = [camera(i) for i in context_indices]
             base = float(raw["metrics"]["base"]["averages"]["PSNR"])
             if not math.isfinite(base) or abs(base) < 1e-6:
                 raise ValueError(f"Invalid base PSNR in {results_path}")
@@ -176,14 +184,29 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                 if candidate_id == "base" or candidate.get("status") not in {"complete", "redundant"}:
                     continue
                 metric = raw["metrics"].get(candidate_id, {}).get("averages", {})
-                index = candidate.get("candidate_lattice_index")
-                if index is None or "PSNR" not in metric:
+                if "PSNR" not in metric:
                     continue
-                iterations = raw.get("metrics_iterations", {})
-                base_iteration = iterations.get("base", raw.get("metrics_iteration"))
-                candidate_iteration = iterations.get(candidate_id, raw.get("metrics_iteration"))
-                if base_iteration != candidate_iteration:
-                    raise ValueError(f"Mixed metric iterations in {results_path}: {candidate_id}")
+                index = candidate.get("candidate_lattice_index")
+                if index is None:
+                    candidate_indices = candidate.get("train_lattice_indices")
+                    if candidate_indices is not None:
+                        added_indices = set(map(int, candidate_indices)) - set(map(int, context_indices))
+                        if len(added_indices) == 1:
+                            index = added_indices.pop()
+                        elif not added_indices and candidate.get("status") == "redundant":
+                            skipped_candidates.append({
+                                "source_results": relative_path(results_path, output.parent),
+                                "candidate_id": str(candidate_id),
+                                "reason": "redundant result has no distinct candidate camera index",
+                            })
+                            continue
+                        else:
+                            raise ValueError(
+                                f"Expected one added camera for {candidate_id} in {results_path}; "
+                                f"found {len(added_indices)}."
+                            )
+                if index is None:
+                    raise ValueError(f"Missing candidate camera index for {candidate_id} in {results_path}")
                 _, pose, intrinsics = camera(index)
                 value = float(metric["PSNR"])
                 if not math.isfinite(value):
@@ -201,6 +224,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                          f"under {results_root.resolve()}. Check candidate statuses and PSNR metrics. "
                          "An existing JSONL can instead be calibrated with --upgrade; labels are preserved.")
     report = audit_samples(samples)
+    report["skipped_candidates"] = skipped_candidates
     if duplicates == "mean":
         samples = deduplicate_samples(samples)
     elif duplicates != "keep":
