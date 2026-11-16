@@ -1,0 +1,13 @@
+{
+  "fastgs_dir": "../FastGS",
+  "python": null,
+  "base_iterations": 30000,
+  "candidate_iterations": 30000,
+  "candidate_base_iterations": 3000,
+  "densification_interval": 500,
+  "grad_abs_thresh": 0.0012,
+  "adaptation_lr_scale": 0.1,
+  "adaptation_densify_from_iter": 100,
+  "adaptation_densify_until_iter": 1500,
+  "adaptation_densification_interval": 250
+}

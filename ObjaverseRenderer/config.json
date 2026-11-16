@@ -1,0 +1,13 @@
+{
+  "objects_root": "objects",
+  "output_root": "views",
+  "blender_exe": null,
+  "image_width": 512,
+  "image_height": 512,
+  "lattice_size": 100,
+  "horizontal_fov_deg": 50.0,
+  "trajectory_elevation_deg": 20.0,
+  "camera_distance_scale": 1.15,
+  "save_blend_file": true,
+  "use_gpu": true
+}

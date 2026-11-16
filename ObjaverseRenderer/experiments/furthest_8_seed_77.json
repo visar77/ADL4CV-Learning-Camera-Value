@@ -1,0 +1,25 @@
+{
+  "id": "furthest_8_seed_77",
+  "train": {
+    "strategy": "furthest",
+    "count": 8,
+    "seed": 77
+  },
+  "candidates": [
+    {
+      "strategy": "blindspot"
+    },
+    {
+      "strategy": "random",
+      "count": 6
+    },
+    {
+      "strategy": "redundancy",
+      "count": 2
+    },
+    {
+      "strategy": "next",
+      "count": 3
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+objects/*.glb
+views
+views_*/
+.venv
+.idea
+hdris
+reconstructions
+reconstructions_*/
+results
+results_*/
+__pycache__
+*.zip

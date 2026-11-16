@@ -1,0 +1,25 @@
+{
+  "id": "trajectory_6_seed_77",
+  "train": {
+    "strategy": "trajectory",
+    "count": 6,
+    "seed": 77
+  },
+  "candidates": [
+    {
+      "strategy": "blindspot"
+    },
+    {
+      "strategy": "random",
+      "count": 6
+    },
+    {
+      "strategy": "redundancy",
+      "count": 2
+    },
+    {
+      "strategy": "next",
+      "count": 3
+    }
+  ]
+}

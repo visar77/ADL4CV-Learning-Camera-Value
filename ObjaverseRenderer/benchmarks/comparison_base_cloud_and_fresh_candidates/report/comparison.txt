@@ -1,0 +1,187 @@
+Matched reconstruction benchmark
+Positive PSNR/SSIM/LPIPS delta means the method is better than fresh; LPIPS gain is a decrease.
+Times are training subprocess wall seconds (startup, loading, training and saving); evaluation excluded.
+
+Object: Crate | Experiment: furthest_14_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 157.76    | 14.58      | -0.0105                | 0.0031                 | 0.0001                 
+next-1      | 158.50    | 14.92      | 0.1304                 | 0.0026                 | 0.0019                 
+random-1    | 160.55    | 14.74      | 0.1356                 | 0.0107                 | 0.0061                 
+MEAN        | 158.94    | 14.74      | 0.0852                 | 0.0054                 | 0.0027                 
+Candidate training wall time: 476.81s -> 44.23s (90.7% saved; 10.78x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 0.0645 / -0.0014 / -0.0012; base-cloud-3k 0.1496 / 0.0041 / 0.0015
+Negative PSNR gains: fresh 1/3; method 0/3. PSNR gain MAE 0.0922 dB; rank correlation 0.5000; top-choice agreement 0.0000; selection regret 0.0062 dB.
+Shared base: 151.98s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 628.79s -> 196.21s (3.20x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: Crate | Experiment: furthest_4_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 149.85    | 13.62      | -1.9257                | -0.0349                | -0.0312                
+next-1      | 145.53    | 13.53      | -1.3897                | -0.0137                | -0.0163                
+random-1    | 146.89    | 14.78      | -1.2255                | -0.0249                | -0.0243                
+MEAN        | 147.42    | 13.98      | -1.5136                | -0.0245                | -0.0239                
+Candidate training wall time: 442.27s -> 41.93s (90.5% saved; 10.55x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 1.9387 / 0.0332 / 0.0340; base-cloud-3k 0.4251 / 0.0087 / 0.0100
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 1.5136 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 139.54s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 581.81s -> 181.47s (3.21x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: Crate | Experiment: random_15_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 148.09    | 14.57      | 0.0516                 | -0.0041                | -0.0013                
+next-1      | 151.81    | 14.71      | 0.3214                 | 0.0048                 | 0.0005                 
+random-1    | 152.30    | 15.03      | 0.4854                 | 0.0126                 | 0.0053                 
+MEAN        | 150.73    | 14.77      | 0.2861                 | 0.0044                 | 0.0015                 
+Candidate training wall time: 452.20s -> 44.30s (90.2% saved; 10.21x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh -0.1273 / -0.0004 / -0.0000; base-cloud-3k 0.1588 / 0.0040 / 0.0015
+Negative PSNR gains: fresh 2/3; method 0/3. PSNR gain MAE 0.2861 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 151.05s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 603.24s -> 195.35s (3.09x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: Crate | Experiment: random_3_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 167.04    | 14.77      | -1.4161                | -0.0139                | -0.0202                
+next-1      | 160.81    | 14.60      | -0.5060                | -0.0048                | -0.0139                
+random-1    | 153.32    | 14.78      | -0.3227                | -0.0099                | -0.0097                
+MEAN        | 160.39    | 14.72      | -0.7483                | -0.0095                | -0.0146                
+Candidate training wall time: 481.17s -> 44.16s (90.8% saved; 10.90x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 1.8930 / 0.0250 / 0.0273; base-cloud-3k 1.1448 / 0.0155 / 0.0127
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 0.7483 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 155.81s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 636.99s -> 199.97s (3.19x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: Crate | Experiment: trajectory_12_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 152.36    | 14.01      | -0.5776                | -0.0021                | -0.0056                
+next-1      | 149.50    | 17.42      | 0.2842                 | 0.0062                 | 0.0049                 
+random-1    | 155.01    | 14.49      | 0.3118                 | 0.0082                 | 0.0046                 
+MEAN        | 152.29    | 15.30      | 0.0061                 | 0.0041                 | 0.0013                 
+Candidate training wall time: 456.88s -> 45.91s (90.0% saved; 9.95x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 0.4408 / 0.0049 / 0.0031; base-cloud-3k 0.4469 / 0.0090 / 0.0044
+Negative PSNR gains: fresh 2/3; method 0/3. PSNR gain MAE 0.3912 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 147.69s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 604.56s -> 193.60s (3.12x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: Crate | Experiment: trajectory_2_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 145.22    | 13.72      | -2.8162                | -0.1319                | -0.1102                
+next-1      | 132.61    | 13.16      | 1.1953                 | -0.0276                | -0.0211                
+random-1    | 150.98    | 15.40      | -1.6490                | -0.1192                | -0.1029                
+MEAN        | 142.94    | 14.09      | -1.0900                | -0.0929                | -0.0781                
+Candidate training wall time: 428.81s -> 42.27s (90.1% saved; 10.14x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 2.5842 / 0.1486 / 0.1076; base-cloud-3k 1.4943 / 0.0557 / 0.0295
+Negative PSNR gains: fresh 1/3; method 0/3. PSNR gain MAE 1.8869 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 136.47s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 565.28s -> 178.74s (3.16x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: furthest_14_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 88.78     | 12.33      | -0.1799                | -0.0007                | -0.0003                
+next-1      | 94.15     | 12.62      | 0.0550                 | -0.0001                | 0.0003                 
+random-1    | 88.77     | 12.97      | -0.2347                | -0.0007                | -0.0005                
+MEAN        | 90.57     | 12.64      | -0.1199                | -0.0005                | -0.0002                
+Candidate training wall time: 271.70s -> 37.92s (86.0% saved; 7.16x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 0.3114 / 0.0014 / 0.0008; base-cloud-3k 0.1915 / 0.0009 / 0.0007
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 0.1566 dB; rank correlation 0.5000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 88.35s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 360.05s -> 126.27s (2.85x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: furthest_4_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 94.40     | 11.49      | -1.5951                | -0.0129                | -0.0170                
+next-1      | 93.75     | 12.46      | -1.0809                | -0.0121                | -0.0153                
+random-1    | 88.23     | 11.51      | -1.0972                | -0.0095                | -0.0115                
+MEAN        | 92.13     | 11.82      | -1.2577                | -0.0115                | -0.0146                
+Candidate training wall time: 276.38s -> 35.47s (87.2% saved; 7.79x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 2.0612 / 0.0210 / 0.0239; base-cloud-3k 0.8034 / 0.0095 / 0.0093
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 1.2577 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 89.87s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 366.25s -> 125.34s (2.92x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: random_15_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 95.14     | 13.93      | 0.1352                 | 0.0005                 | 0.0004                 
+next-1      | 91.11     | 12.37      | 0.1502                 | 0.0009                 | 0.0010                 
+random-1    | 92.25     | 12.07      | 0.1812                 | 0.0007                 | 0.0001                 
+MEAN        | 92.83     | 12.79      | 0.1555                 | 0.0007                 | 0.0005                 
+Candidate training wall time: 278.50s -> 38.37s (86.2% saved; 7.26x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh -0.0154 / -0.0001 / -0.0002; base-cloud-3k 0.1401 / 0.0006 / 0.0003
+Negative PSNR gains: fresh 2/3; method 0/3. PSNR gain MAE 0.1555 dB; rank correlation 0.5000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 89.38s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 367.88s -> 127.74s (2.88x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: random_3_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 92.85     | 12.25      | 0.1918                 | 0.0162                 | 0.0129                 
+next-1      | 87.08     | 11.38      | -1.0610                | -0.0181                | -0.0166                
+random-1    | 96.66     | 12.44      | -0.3179                | -0.0056                | -0.0018                
+MEAN        | 92.20     | 12.02      | -0.3957                | -0.0025                | -0.0018                
+Candidate training wall time: 276.59s -> 36.07s (87.0% saved; 7.67x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 1.1638 / 0.0095 / 0.0079; base-cloud-3k 0.7681 / 0.0070 / 0.0061
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 0.5236 dB; rank correlation -0.5000; top-choice agreement 0.0000; selection regret 0.1286 dB.
+Shared base: 102.62s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 379.21s -> 138.69s (2.73x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: trajectory_12_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 90.27     | 11.17      | -0.4382                | -0.0036                | -0.0041                
+next-1      | 93.36     | 13.37      | -0.3524                | -0.0029                | -0.0031                
+random-1    | 90.27     | 13.45      | -0.1930                | -0.0020                | -0.0015                
+MEAN        | 91.30     | 12.67      | -0.3279                | -0.0028                | -0.0029                
+Candidate training wall time: 273.90s -> 38.00s (86.1% saved; 7.21x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 1.1132 / 0.0102 / 0.0080; base-cloud-3k 0.7853 / 0.0074 / 0.0051
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 0.3279 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 91.41s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 365.31s -> 129.41s (2.82x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+Object: HCR2 superbike (rudolf) | Experiment: trajectory_2_seed_77 | base-cloud-3k vs fresh
+Paired candidates: 3 (redundancy controls and duplicate actions excluded); gains use the original base.
+Candidate   | Fresh sec | Method sec | Method-fresh PSNR gain | Method-fresh SSIM gain | Method-fresh LPIPS gain
+------------+-----------+------------+------------------------+------------------------+------------------------
+blindspot-1 | 92.18     | 11.85      | -0.6006                | -0.0023                | -0.0084                
+next-1      | 86.07     | 11.69      | -0.3954                | -0.0043                | -0.0103                
+random-1    | 94.81     | 12.95      | -0.7512                | -0.0036                | -0.0137                
+MEAN        | 91.02     | 12.16      | -0.5824                | -0.0034                | -0.0108                
+Candidate training wall time: 273.06s -> 36.49s (86.6% saved; 7.48x speedup)
+Mean gain over original base (PSNR / SSIM / LPIPS): fresh 2.3457 / 0.0231 / 0.0417; base-cloud-3k 1.7633 / 0.0197 / 0.0309
+Negative PSNR gains: fresh 0/3; method 0/3. PSNR gain MAE 0.5824 dB; rank correlation 1.0000; top-choice agreement 1.0000; selection regret 0.0000 dB.
+Shared base: 91.29s; initialization preparation: 0.00s; optional base-only control: 0.00s (separate from candidate totals).
+Production time including shared base and initialization: 364.35s -> 127.79s (2.85x speedup).
+Timing environment metadata unavailable for at least one pair; hardware comparability is unverified.
+
+All contexts (candidate-weighted means)
+base-cloud-3k: 12 contexts, 36 pairs, 9.05x speedup, PSNR/SSIM/LPIPS gain delta -0.4585 / -0.0111 / -0.0117
+Context-weighted top-choice agreement 0.8333; mean selection regret 0.0112 dB.

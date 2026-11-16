@@ -1,0 +1,8 @@
+{
+  "objects_root": "objects",
+  "views_root": "views",
+  "experiments_dir": "experiments",
+  "reconstructions_root": "reconstructions",
+  "results_root": "results",
+  "base_cloud_ply": null
+}

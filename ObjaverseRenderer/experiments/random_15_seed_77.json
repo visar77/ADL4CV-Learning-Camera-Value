@@ -1,0 +1,25 @@
+{
+  "id": "random_15_seed_77",
+  "train": {
+    "strategy": "random",
+    "count": 15,
+    "seed": 77
+  },
+  "candidates": [
+    {
+      "strategy": "blindspot"
+    },
+    {
+      "strategy": "random",
+      "count": 6
+    },
+    {
+      "strategy": "redundancy",
+      "count": 2
+    },
+    {
+      "strategy": "next",
+      "count": 3
+    }
+  ]
+}
