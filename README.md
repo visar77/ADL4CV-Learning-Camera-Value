@@ -232,6 +232,37 @@ benchmark rejects redundant-view controls because they are not candidate
 comparisons. Different settings should use a separately named benchmark script
 and matching config rather than mixing runs in one output folder.
 
+### FastGS run-to-run variability
+
+[fastgs_reconstruction_variability.py](benchmarks/fastgs_reconstruction_variability.py)
+repeats selected `base` or candidate reconstructions with both fresh 30k
+training and base-cloud 3k adaptation. Configure `repetitions`, `objects`,
+`experiments`, and `candidate_ids` in
+[fastgs_reconstruction_variability.json](benchmarks/fastgs_reconstruction_variability.json).
+The repetition count applies to every selected object/experiment/candidate for
+both methods. FastGS uses its existing default RNG initialization for every
+training process; this benchmark does not set per-repetition training seeds.
+
+Each object/experiment gets one 30k base-cloud reconstruction, which is
+preserved and reused to initialize every selected 3k candidate adaptation and
+repetition. It is evaluated once. Selecting `base` includes this shared model
+in the report; fresh-30k still independently repeats each selected target.
+The report summarizes Gaussian counts and PSNR/SSIM/LPIPS means, population
+standard deviations, and ranges for each selected target and method.
+
+Run a plan first, then execute:
+
+```bash
+python benchmarks/fastgs_reconstruction_variability.py --dry-run
+python benchmarks/fastgs_reconstruction_variability.py
+```
+
+Each execution writes to a new timestamped run directory under
+`benchmarks/fastgs_reconstruction_variability/`. Reconstructions, per-run
+`results.json` files, the config snapshot, `report.json`, and `report.txt` are
+kept in that directory; an existing run directory is never reused or
+overwritten.
+
 Outputs are written under
 `benchmarks/comparison_base_cloud_and_fresh_candidates/`:
 

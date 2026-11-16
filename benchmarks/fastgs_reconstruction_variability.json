@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repetitions": 5,
+  "objects": [
+    "Crate", "HCR2 superbike (rudolf)"
+  ],
+  "experiments": [
+    "random_3_seed_77", "trajectory_6_seed_77", "furthest_14_seed_77"
+  ],
+  "candidate_ids": [
+    "blindspot-1", "random-1", "next-1"
+  ]
+}
