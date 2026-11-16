@@ -347,7 +347,6 @@ and Python caches are excluded by `.gitignore` for the standard output names.
 
 ```bash
 python -m unittest discover -s tests -v
-python gpu_preflight.py --fastgs-dir ../FastGS
 FASTGS_RUN_GPU_TESTS=1 FASTGS_DIR=../FastGS python -m unittest discover \
   -s tests -p test_fastgs_adapter_gpu.py -v
 ```
