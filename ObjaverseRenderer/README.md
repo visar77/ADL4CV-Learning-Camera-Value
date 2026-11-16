@@ -57,6 +57,13 @@ an ID or unique substring; duplicate names receive ID suffixes. `--output-dir`,
 `--index`, and `--mapping` override the destination and metadata sources.
 Metadata is streamed/held in memory rather than retained as a local dataset.
 
+For ObjaversePlusPlus
+
+```bash
+python3 download_gbuffer_objaverse.py --count 20 --seed 77 \
+  --index objects/unflagged20_20261113.json --output-dir objects
+```
+
 Render one object by passing its GLB explicitly:
 
 ```bash
