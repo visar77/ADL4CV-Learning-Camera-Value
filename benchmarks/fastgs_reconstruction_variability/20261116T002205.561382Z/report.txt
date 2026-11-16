@@ -1,0 +1,258 @@
+FastGS reconstruction variability
+Repetitions per selected object/experiment/candidate: 5
+Fresh targets use 30,000 iterations; base-cloud targets use a newly trained 30,000-iteration base
+once per object/experiment, then reuse it for each 3,000-iteration adaptation.
+Gaussian count and metrics are summarized with population standard deviation.
+
+base-cloud-3k | Crate | furthest_14_seed_77 | base | final | n=1
+  Gaussians: mean 33684.00, std 0.00, min 33684, max 33684
+  PSNR: mean 25.637011, std 0.000000, min 25.637011, max 25.637011
+  SSIM: mean 0.815771, std 0.000000, min 0.815771, max 0.815771
+  LPIPS: mean 0.134202, std 0.000000, min 0.134202, max 0.134202
+  Training seconds: mean 148.47, std 0.00
+base-cloud-3k | Crate | furthest_14_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 38467.80, std 90.13, min 38301, max 38564
+  PSNR: mean 25.755381, std 0.006911, min 25.746748, max 25.766665
+  SSIM: mean 0.819105, std 0.000232, min 0.818745, max 0.819419
+  LPIPS: mean 0.132303, std 0.000168, min 0.132127, max 0.132580
+  Training seconds: mean 14.81, std 0.15
+base-cloud-3k | Crate | furthest_14_seed_77 | next-1 | final | n=5
+  Gaussians: mean 39273.60, std 98.03, min 39155, max 39411
+  PSNR: mean 25.837317, std 0.007875, min 25.823471, max 25.847685
+  SSIM: mean 0.821575, std 0.000345, min 0.820972, max 0.821968
+  LPIPS: mean 0.131272, std 0.000237, min 0.130869, max 0.131550
+  Training seconds: mean 14.81, std 0.59
+base-cloud-3k | Crate | furthest_14_seed_77 | random-1 | final | n=5
+  Gaussians: mean 38033.20, std 117.27, min 37882, max 38187
+  PSNR: mean 25.722210, std 0.008388, min 25.709608, max 25.734287
+  SSIM: mean 0.818493, std 0.000240, min 0.818158, max 0.818821
+  LPIPS: mean 0.133202, std 0.000235, min 0.132814, max 0.133438
+  Training seconds: mean 15.67, std 1.18
+base-cloud-3k | Crate | random_3_seed_77 | base | final | n=1
+  Gaussians: mean 26981.00, std 0.00, min 26981, max 26981
+  PSNR: mean 15.920519, std 0.000000, min 15.920519, max 15.920519
+  SSIM: mean 0.630721, std 0.000000, min 0.630721, max 0.630721
+  LPIPS: mean 0.285091, std 0.000000, min 0.285091, max 0.285091
+  Training seconds: mean 165.86, std 0.00
+base-cloud-3k | Crate | random_3_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 42679.80, std 592.32, min 41889, max 43510
+  PSNR: mean 16.941666, std 0.062270, min 16.851692, max 17.014755
+  SSIM: mean 0.640703, std 0.001175, min 0.639298, max 0.642494
+  LPIPS: mean 0.277871, std 0.000679, min 0.276812, max 0.278484
+  Training seconds: mean 15.65, std 0.71
+base-cloud-3k | Crate | random_3_seed_77 | next-1 | final | n=5
+  Gaussians: mean 39954.20, std 376.96, min 39581, max 40656
+  PSNR: mean 16.655314, std 0.007859, min 16.645586, max 16.664577
+  SSIM: mean 0.647171, std 0.000609, min 0.646462, max 0.648072
+  LPIPS: mean 0.272259, std 0.001022, min 0.271032, max 0.273485
+  Training seconds: mean 14.71, std 0.33
+base-cloud-3k | Crate | random_3_seed_77 | random-1 | final | n=5
+  Gaussians: mean 40466.40, std 389.38, min 39895, max 40918
+  PSNR: mean 16.925497, std 0.015587, min 16.901075, max 16.947132
+  SSIM: mean 0.651252, std 0.000278, min 0.650846, max 0.651678
+  LPIPS: mean 0.268584, std 0.000208, min 0.268359, max 0.268886
+  Training seconds: mean 14.93, std 0.38
+base-cloud-3k | Crate | trajectory_6_seed_77 | base | final | n=1
+  Gaussians: mean 30550.00, std 0.00, min 30550, max 30550
+  PSNR: mean 15.135255, std 0.000000, min 15.135255, max 15.135255
+  SSIM: mean 0.630788, std 0.000000, min 0.630788, max 0.630788
+  LPIPS: mean 0.278712, std 0.000000, min 0.278712, max 0.278712
+  Training seconds: mean 140.46, std 0.00
+base-cloud-3k | Crate | trajectory_6_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 44976.00, std 89.98, min 44877, max 45118
+  PSNR: mean 17.010222, std 0.022706, min 16.983707, max 17.045490
+  SSIM: mean 0.640316, std 0.000924, min 0.638977, max 0.641372
+  LPIPS: mean 0.266085, std 0.000603, min 0.265403, max 0.267169
+  Training seconds: mean 14.74, std 0.73
+base-cloud-3k | Crate | trajectory_6_seed_77 | next-1 | final | n=5
+  Gaussians: mean 37859.20, std 336.95, min 37282, max 38221
+  PSNR: mean 15.699734, std 0.043007, min 15.624282, max 15.747169
+  SSIM: mean 0.642952, std 0.000693, min 0.641766, max 0.643774
+  LPIPS: mean 0.269990, std 0.000418, min 0.269210, max 0.270372
+  Training seconds: mean 14.16, std 0.62
+base-cloud-3k | Crate | trajectory_6_seed_77 | random-1 | final | n=5
+  Gaussians: mean 37027.40, std 264.56, min 36667, max 37369
+  PSNR: mean 16.253163, std 0.035360, min 16.195480, max 16.293163
+  SSIM: mean 0.641745, std 0.001336, min 0.640971, max 0.644406
+  LPIPS: mean 0.269893, std 0.000385, min 0.269153, max 0.270280
+  Training seconds: mean 13.76, std 0.25
+base-cloud-3k | HCR2 superbike (rudolf) | furthest_14_seed_77 | base | final | n=1
+  Gaussians: mean 18083.00, std 0.00, min 18083, max 18083
+  PSNR: mean 31.401033, std 0.000000, min 31.401033, max 31.401033
+  SSIM: mean 0.970777, std 0.000000, min 0.970777, max 0.970777
+  LPIPS: mean 0.026291, std 0.000000, min 0.026291, max 0.026291
+  Training seconds: mean 90.67, std 0.00
+base-cloud-3k | HCR2 superbike (rudolf) | furthest_14_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 18174.40, std 1.36, min 18173, max 18177
+  PSNR: mean 31.551429, std 0.001876, min 31.549307, max 31.554401
+  SSIM: mean 0.971497, std 0.000016, min 0.971475, max 0.971512
+  LPIPS: mean 0.025830, std 0.000014, min 0.025811, max 0.025846
+  Training seconds: mean 12.74, std 0.48
+base-cloud-3k | HCR2 superbike (rudolf) | furthest_14_seed_77 | next-1 | final | n=5
+  Gaussians: mean 18116.00, std 3.10, min 18114, max 18122
+  PSNR: mean 31.598333, std 0.004427, min 31.592628, max 31.603462
+  SSIM: mean 0.971852, std 0.000014, min 0.971835, max 0.971876
+  LPIPS: mean 0.025578, std 0.000021, min 0.025542, max 0.025604
+  Training seconds: mean 11.98, std 0.56
+base-cloud-3k | HCR2 superbike (rudolf) | furthest_14_seed_77 | random-1 | final | n=5
+  Gaussians: mean 18128.80, std 4.53, min 18123, max 18137
+  PSNR: mean 31.673904, std 0.001407, min 31.671103, max 31.674833
+  SSIM: mean 0.971849, std 0.000009, min 0.971838, max 0.971860
+  LPIPS: mean 0.025483, std 0.000013, min 0.025467, max 0.025502
+  Training seconds: mean 13.19, std 1.28
+base-cloud-3k | HCR2 superbike (rudolf) | random_3_seed_77 | base | final | n=1
+  Gaussians: mean 19714.00, std 0.00, min 19714, max 19714
+  PSNR: mean 19.823790, std 0.000000, min 19.823790, max 19.823790
+  SSIM: mean 0.860203, std 0.000000, min 0.860203, max 0.860203
+  LPIPS: mean 0.121835, std 0.000000, min 0.121835, max 0.121835
+  Training seconds: mean 94.22, std 0.00
+base-cloud-3k | HCR2 superbike (rudolf) | random_3_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 21850.00, std 44.77, min 21805, max 21921
+  PSNR: mean 20.678408, std 0.017311, min 20.660965, max 20.700642
+  SSIM: mean 0.865405, std 0.000215, min 0.865140, max 0.865674
+  LPIPS: mean 0.118091, std 0.000341, min 0.117524, max 0.118594
+  Training seconds: mean 11.78, std 0.45
+base-cloud-3k | HCR2 superbike (rudolf) | random_3_seed_77 | next-1 | final | n=5
+  Gaussians: mean 20587.60, std 22.17, min 20551, max 20620
+  PSNR: mean 20.136095, std 0.014248, min 20.119480, max 20.157042
+  SSIM: mean 0.865894, std 0.000134, min 0.865733, max 0.866130
+  LPIPS: mean 0.117611, std 0.000158, min 0.117321, max 0.117796
+  Training seconds: mean 12.27, std 1.45
+base-cloud-3k | HCR2 superbike (rudolf) | random_3_seed_77 | random-1 | final | n=5
+  Gaussians: mean 22362.00, std 35.94, min 22307, max 22414
+  PSNR: mean 20.866825, std 0.084480, min 20.712437, max 20.952393
+  SSIM: mean 0.869226, std 0.000544, min 0.868307, max 0.869816
+  LPIPS: mean 0.114314, std 0.000369, min 0.113859, max 0.114889
+  Training seconds: mean 12.20, std 0.44
+base-cloud-3k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | base | final | n=1
+  Gaussians: mean 16827.00, std 0.00, min 16827, max 16827
+  PSNR: mean 21.515213, std 0.000000, min 21.515213, max 21.515213
+  SSIM: mean 0.887120, std 0.000000, min 0.887120, max 0.887120
+  LPIPS: mean 0.096023, std 0.000000, min 0.096023, max 0.096023
+  Training seconds: mean 90.39, std 0.00
+base-cloud-3k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 17243.20, std 9.68, min 17236, max 17262
+  PSNR: mean 23.040048, std 0.011062, min 23.022245, max 23.053438
+  SSIM: mean 0.894797, std 0.000394, min 0.894246, max 0.895342
+  LPIPS: mean 0.090172, std 0.000293, min 0.089761, max 0.090604
+  Training seconds: mean 11.77, std 0.73
+base-cloud-3k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | next-1 | final | n=5
+  Gaussians: mean 17184.80, std 6.79, min 17174, max 17194
+  PSNR: mean 22.050769, std 0.005559, min 22.044661, max 22.061172
+  SSIM: mean 0.892537, std 0.000138, min 0.892326, max 0.892760
+  LPIPS: mean 0.090380, std 0.000125, min 0.090210, max 0.090585
+  Training seconds: mean 12.66, std 1.64
+base-cloud-3k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | random-1 | final | n=5
+  Gaussians: mean 17486.00, std 23.00, min 17450, max 17514
+  PSNR: mean 22.971482, std 0.021813, min 22.941597, max 23.005299
+  SSIM: mean 0.900590, std 0.000148, min 0.900353, max 0.900818
+  LPIPS: mean 0.083538, std 0.000154, min 0.083380, max 0.083823
+  Training seconds: mean 11.64, std 0.61
+fresh-30k | Crate | furthest_14_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 35068.00, std 210.06, min 34830, max 35453
+  PSNR: mean 25.827845, std 0.114387, min 25.675131, max 26.022774
+  SSIM: mean 0.812690, std 0.003451, min 0.807377, max 0.818137
+  LPIPS: mean 0.132736, std 0.001361, min 0.131059, max 0.135191
+  Training seconds: mean 160.98, std 0.70
+fresh-30k | Crate | furthest_14_seed_77 | next-1 | final | n=5
+  Gaussians: mean 35306.40, std 465.68, min 34800, max 36120
+  PSNR: mean 25.836747, std 0.094043, min 25.729397, max 25.975597
+  SSIM: mean 0.820080, std 0.002945, min 0.815200, max 0.824471
+  LPIPS: mean 0.131413, std 0.001627, min 0.129131, max 0.133043
+  Training seconds: mean 154.66, std 3.69
+fresh-30k | Crate | furthest_14_seed_77 | random-1 | final | n=5
+  Gaussians: mean 35025.60, std 230.47, min 34700, max 35309
+  PSNR: mean 25.612779, std 0.103356, min 25.409735, max 25.694088
+  SSIM: mean 0.808445, std 0.001973, min 0.806277, max 0.812078
+  LPIPS: mean 0.136295, std 0.001093, min 0.134633, max 0.137388
+  Training seconds: mean 154.59, std 3.17
+fresh-30k | Crate | random_3_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 29121.60, std 447.67, min 28350, max 29741
+  PSNR: mean 18.069484, std 0.541996, min 17.251057, max 18.673580
+  SSIM: mean 0.654766, std 0.006272, min 0.647751, max 0.663312
+  LPIPS: mean 0.264134, std 0.006629, min 0.255173, max 0.273955
+  Training seconds: mean 163.51, std 4.56
+fresh-30k | Crate | random_3_seed_77 | next-1 | final | n=5
+  Gaussians: mean 26792.20, std 328.55, min 26293, max 27221
+  PSNR: mean 17.060678, std 0.260372, min 16.711720, max 17.410938
+  SSIM: mean 0.653151, std 0.003244, min 0.649055, max 0.656480
+  LPIPS: mean 0.267138, std 0.003685, min 0.263341, max 0.272459
+  Training seconds: mean 154.85, std 3.48
+fresh-30k | Crate | random_3_seed_77 | random-1 | final | n=5
+  Gaussians: mean 25869.80, std 751.13, min 24957, max 26921
+  PSNR: mean 17.541103, std 0.339575, min 17.112587, max 18.044609
+  SSIM: mean 0.666572, std 0.001732, min 0.663368, max 0.668589
+  LPIPS: mean 0.254160, std 0.001716, min 0.252594, max 0.256762
+  Training seconds: mean 153.70, std 4.20
+fresh-30k | Crate | trajectory_6_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 38181.00, std 233.44, min 37802, max 38522
+  PSNR: mean 18.775011, std 0.184459, min 18.539747, max 19.105558
+  SSIM: mean 0.679340, std 0.004387, min 0.673758, max 0.684994
+  LPIPS: mean 0.242798, std 0.004205, min 0.237847, max 0.248899
+  Training seconds: mean 151.04, std 2.11
+fresh-30k | Crate | trajectory_6_seed_77 | next-1 | final | n=5
+  Gaussians: mean 31852.00, std 248.58, min 31371, max 32081
+  PSNR: mean 16.678497, std 0.327135, min 16.229200, max 17.227917
+  SSIM: mean 0.660487, std 0.005846, min 0.652084, max 0.668267
+  LPIPS: mean 0.252059, std 0.005351, min 0.246563, max 0.261285
+  Training seconds: mean 141.62, std 1.47
+fresh-30k | Crate | trajectory_6_seed_77 | random-1 | final | n=5
+  Gaussians: mean 30733.60, std 240.56, min 30549, max 31207
+  PSNR: mean 17.418694, std 0.425419, min 16.728777, max 17.895367
+  SSIM: mean 0.674268, std 0.005501, min 0.669122, max 0.683788
+  LPIPS: mean 0.239611, std 0.004899, min 0.234957, max 0.247942
+  Training seconds: mean 146.72, std 3.56
+fresh-30k | HCR2 superbike (rudolf) | furthest_14_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 18123.40, std 64.29, min 18001, max 18179
+  PSNR: mean 31.477829, std 0.021260, min 31.452265, max 31.501740
+  SSIM: mean 0.971368, std 0.000127, min 0.971176, max 0.971577
+  LPIPS: mean 0.026151, std 0.000254, min 0.025751, max 0.026509
+  Training seconds: mean 92.31, std 5.01
+fresh-30k | HCR2 superbike (rudolf) | furthest_14_seed_77 | next-1 | final | n=5
+  Gaussians: mean 18099.20, std 38.20, min 18045, max 18143
+  PSNR: mean 31.561351, std 0.031453, min 31.509687, max 31.605671
+  SSIM: mean 0.971561, std 0.000170, min 0.971379, max 0.971878
+  LPIPS: mean 0.025933, std 0.000276, min 0.025560, max 0.026402
+  Training seconds: mean 89.11, std 2.67
+fresh-30k | HCR2 superbike (rudolf) | furthest_14_seed_77 | random-1 | final | n=5
+  Gaussians: mean 18370.20, std 59.53, min 18327, max 18488
+  PSNR: mean 31.756051, std 0.025508, min 31.709606, max 31.781658
+  SSIM: mean 0.971796, std 0.000164, min 0.971553, max 0.971934
+  LPIPS: mean 0.025605, std 0.000263, min 0.025282, max 0.025940
+  Training seconds: mean 92.57, std 3.34
+fresh-30k | HCR2 superbike (rudolf) | random_3_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 21953.80, std 135.08, min 21816, max 22169
+  PSNR: mean 20.541350, std 0.141086, min 20.348999, max 20.758656
+  SSIM: mean 0.849496, std 0.001174, min 0.848131, max 0.851643
+  LPIPS: mean 0.134280, std 0.000732, min 0.132906, max 0.134948
+  Training seconds: mean 90.92, std 1.77
+fresh-30k | HCR2 superbike (rudolf) | random_3_seed_77 | next-1 | final | n=5
+  Gaussians: mean 17949.00, std 57.18, min 17852, max 18004
+  PSNR: mean 20.908194, std 0.086494, min 20.782692, max 21.005568
+  SSIM: mean 0.881822, std 0.001542, min 0.879770, max 0.883785
+  LPIPS: mean 0.104916, std 0.001195, min 0.103523, max 0.106767
+  Training seconds: mean 91.50, std 3.95
+fresh-30k | HCR2 superbike (rudolf) | random_3_seed_77 | random-1 | final | n=5
+  Gaussians: mean 20368.80, std 64.71, min 20250, max 20432
+  PSNR: mean 20.843919, std 0.151122, min 20.553963, max 20.975582
+  SSIM: mean 0.870588, std 0.001569, min 0.867486, max 0.871682
+  LPIPS: mean 0.115308, std 0.002293, min 0.113659, max 0.119820
+  Training seconds: mean 91.43, std 3.59
+fresh-30k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | blindspot-1 | final | n=5
+  Gaussians: mean 19019.40, std 106.77, min 18893, max 19203
+  PSNR: mean 23.936796, std 0.105269, min 23.818016, max 24.078156
+  SSIM: mean 0.901972, std 0.000630, min 0.901192, max 0.902960
+  LPIPS: mean 0.082919, std 0.000513, min 0.081940, max 0.083376
+  Training seconds: mean 89.49, std 3.08
+fresh-30k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | next-1 | final | n=5
+  Gaussians: mean 17624.20, std 74.31, min 17549, max 17751
+  PSNR: mean 21.715648, std 0.028330, min 21.676723, max 21.761236
+  SSIM: mean 0.894386, std 0.000331, min 0.893959, max 0.894773
+  LPIPS: mean 0.088834, std 0.000298, min 0.088438, max 0.089327
+  Training seconds: mean 89.10, std 3.00
+fresh-30k | HCR2 superbike (rudolf) | trajectory_6_seed_77 | random-1 | final | n=5
+  Gaussians: mean 16842.80, std 96.20, min 16734, max 17002
+  PSNR: mean 23.279473, std 0.089878, min 23.148726, max 23.388193
+  SSIM: mean 0.905835, std 0.000289, min 0.905592, max 0.906396
+  LPIPS: mean 0.078564, std 0.000495, min 0.077788, max 0.079197
+  Training seconds: mean 90.05, std 3.47
