@@ -93,6 +93,8 @@ def train(args):
               "target": args.target, "target_mean": mean, "target_std": std,
               "image_size": args.image_size, "batch_size": args.batch_size,
               "num_workers": args.num_workers, "dropout": args.dropout,
+              "head_hidden_dim": args.head_hidden_dim,
+              "head_hidden_layers": args.head_hidden_layers,
               "seed": args.seed, "splits": splits, "duplicates": args.duplicates,
               "candidate_rgb_used": False,
               "selection": {"scene_id": args.scene_id, "experiment_id": args.experiment_id},
@@ -305,6 +307,10 @@ def parse_args(argv=None, defaults=None):
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.)
     parser.add_argument("--dropout", type=float, default=0.)
+    parser.add_argument("--head-hidden-dim", type=int, default=64,
+                        help="Cached/LVSM gain-head hidden width (default: 64)")
+    parser.add_argument("--head-hidden-layers", type=int, default=1,
+                        help="Number of hidden layers in the cached/LVSM gain head (default: 1)")
     parser.add_argument("--ridge", type=float, default=1.)
     parser.add_argument("--image-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -326,6 +332,8 @@ def parse_args(argv=None, defaults=None):
     args.device = resolve_device(args.device)
     if min(args.epochs, args.batch_size, args.image_size, args.log_every) < 1:
         parser.error("epochs, batch size, image size and log frequency must be positive")
+    if min(args.head_hidden_dim, args.head_hidden_layers) < 1:
+        parser.error("Gain-head hidden width and layer count must be positive")
     if args.num_workers < 0 or args.ridge < 0 or args.weight_decay < 0 or args.learning_rate <= 0:
         parser.error("Invalid worker count or optimization parameters")
     if not 0 <= args.dropout < 1 or not 0 < args.scheduler_factor < 1:

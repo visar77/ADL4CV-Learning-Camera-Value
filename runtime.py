@@ -24,7 +24,9 @@ def create_model(config):
     if kind == "toy":
         return ContextPoseCNN(image_size=config["image_size"], dropout=config.get("dropout", 0.))
     if kind in {"cached", "lvsm"}:
-        return FeatureGainHead(config["input_dim"], config.get("dropout", 0.))
+        return FeatureGainHead(config["input_dim"], config.get("dropout", 0.),
+                               config.get("head_hidden_dim", 64),
+                               config.get("head_hidden_layers", 1))
     if kind in {"mean", "view-count", "geometry"}:
         return nn.Linear(config["input_dim"], 1)
     raise ValueError(f"Unknown model type {kind}")

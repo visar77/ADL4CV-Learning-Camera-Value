@@ -62,7 +62,7 @@ Records contain the context, candidate camera, and signed relative PSNR gain:
 (candidate PSNR - base PSNR) / abs(base PSNR)
 ```
 
-Redundancy controls are retained when their candidate camera index is present. If a result has no distinct camera index for a redundant candidate, it is skipped and recorded in the audit. Repeated identical capture actions are averaged, preserving their original gain observations and source IDs. `--duplicates keep` preserves separate records; pass it to training too when studying raw observations. The audit reports duplicate spread and negative gains. Labels describe retraining reconstructions from scratch; they can be negative.
+Redundancy controls are included with a zero gain. When the result does not identify which context camera was repeated, the manifest assigns a deterministic existing context-camera pose as a proxy; the audit records these approximations. The exact selected pose cannot be recovered from such a result file, but the control label remains zero. Repeated identical capture actions are averaged, preserving their original gain observations and source IDs. `--duplicates keep` preserves separate records; pass it to training too when studying raw observations. The audit reports duplicate spread and negative gains. Labels describe retraining reconstructions from scratch; they can be negative.
 
 #### Use the full Crate reconstruction
 
@@ -75,7 +75,7 @@ python preprocess.py \
   --output data/processed/crate_all.jsonl
 ```
 
-This scans all experiment subdirectories under `results/Crate`; the camera images/transforms come from `views/Crate`. The Crate redundancy entries do not identify which existing camera was selected, so those entries cannot be assigned a candidate pose and are listed as skipped in `crate_all.audit.json`. The other candidate labels use the PSNR values recorded in each `results.json` directly:
+This scans all experiment subdirectories under `results/Crate`; the camera images/transforms come from `views/Crate`. Crate redundancy entries without an explicit candidate index are included with `candidate_id` values such as `redundancy-1` and `redundancy-2`, `psnr_gain: 0.0`, and `observed_gains: [0.0]`. Because the selected repeated camera is not identified in those result files, their candidate pose uses a deterministic context-camera proxy; see `approximated_redundancy_candidates` in the audit. Other candidate labels use the PSNR values recorded in each `results.json` directly:
 
 ```text
 (candidate PSNR - base PSNR) / abs(base PSNR)
@@ -198,6 +198,19 @@ The cache contains `features.pt`, phase timings, and resumable context/candidate
 | `geometry` | Ridge regression on camera distances, directions, count, and relative candidate position |
 | `toy` | Small CNN with context/candidate pose conditioning |
 | `cached` / `lvsm` | MLP head on frozen cached embeddings; both names use the same training path |
+
+For cached/LVSM training, the gain head is configurable with `--head-hidden-dim` and `--head-hidden-layers`. Defaults (`64` and `1`) preserve the original small head. For example, try a 3-layer, 512-wide head with dropout:
+
+```bash
+python train.py --dataset data/processed/all_three.jsonl \
+  --model cached --features data/features/all_three_lvsm512/features.pt \
+  --mode context --balance-scenes --epochs 100 --dropout 0.2 \
+  --head-hidden-dim 512 --head-hidden-layers 3 \
+  --output checkpoints/all_three_lvsm_large/model.pt \
+  --log-dir runs/all_three_lvsm_large
+```
+
+The pretrained LVSM backbone remains frozen; these options enlarge only the trainable gain head. A larger head is not necessarily more accurate: with a small number of independent contexts it can overfit, so compare against the default head on the same saved split and prefer held-out validation/test results.
 
 | Mode | Intended experiment |
 |---|---|

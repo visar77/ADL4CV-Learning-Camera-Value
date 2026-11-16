@@ -315,17 +315,28 @@ def register_backbone(name: str, factory):
 
 
 class FeatureGainHead(nn.Sequential):
-    def __init__(self, feature_dim: int, dropout: float = 0.0):
-        super().__init__(nn.Linear(feature_dim, 64), nn.GELU(), nn.Dropout(dropout), nn.Linear(64, 1))
+    def __init__(self, feature_dim: int, dropout: float = 0.0,
+                 hidden_dim: int = 64, hidden_layers: int = 1):
+        if hidden_dim < 1 or hidden_layers < 1:
+            raise ValueError("Gain-head width and hidden-layer count must be positive.")
+        layers = []
+        input_dim = feature_dim
+        for _ in range(hidden_layers):
+            layers.extend((nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout)))
+            input_dim = hidden_dim
+        layers.append(nn.Linear(input_dim, 1))
+        super().__init__(*layers)
 
 
 class LVSMGainPredictor(nn.Module):
     """Online wrapper; training uses the same head on cached features."""
     def __init__(self, checkpoint: Path, feature_dim=768, image_size=DEFAULT_IMAGE_SIZE,
-                 latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL, dropout=0.0):
+                 latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL, dropout=0.0,
+                 head_hidden_dim=64, head_hidden_layers=1):
         super().__init__()
         self.backbone = LVSMFeatureBackbone(checkpoint, image_size, latent_tokens, checkpoint_url)
-        self.regression_head = FeatureGainHead(self.backbone.feature_dim, dropout)
+        self.regression_head = FeatureGainHead(self.backbone.feature_dim, dropout,
+                                               head_hidden_dim, head_hidden_layers)
 
     def forward(self, images, context_poses, candidate_pose, mask,
                 context_intrinsics=None, candidate_intrinsics=None):
