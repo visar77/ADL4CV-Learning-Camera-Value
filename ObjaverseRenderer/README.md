@@ -57,13 +57,6 @@ an ID or unique substring; duplicate names receive ID suffixes. `--output-dir`,
 `--index`, and `--mapping` override the destination and metadata sources.
 Metadata is streamed/held in memory rather than retained as a local dataset.
 
-For ObjaversePlusPlus
-
-```bash
-python3 download_gbuffer_objaverse.py --count 20 --seed 77 \
-  --index objects/unflagged20_20261113.json --output-dir objects
-```
-
 Render one object by passing its GLB explicitly:
 
 ```bash
@@ -308,13 +301,26 @@ python orchestrator.py \
   --candidate_id random-1
 ```
 
-The supported switches are `--retrain`, `--rerender`,
-`--use-candidate-base [base-3k]`, `--evaluate_metrics`, and `--redo`. Existing
-reconstructions are reused unless `--retrain` is specified; missing or
-incomplete reconstructions are trained. `--rerender` forces corpus generation.
+The supported switches include `--retrain`, `--rerender`,
+`--use-candidate-base [base-3k]`, `--do-not-evaluate`, `--redo`,
+`--continue-on-error`, and `--retries` (default: 3 retries after the initial
+attempt). Every completed reconstruction is evaluated automatically;
+`--do-not-evaluate` disables that behavior. `--redo` forces recomputation of
+metrics. Existing reconstructions are reused unless `--retrain` is specified;
+missing or incomplete reconstructions are trained. `--rerender` forces corpus
+generation. FastGS training and metric evaluation are retried up to the
+configured count.
+After retries are exhausted, the job is recorded as failed in its
+`results.json`; without `--continue-on-error` the orchestrator then exits, and
+with it the orchestrator proceeds to other reconstructions. A later run retries
+failed reconstructions and evaluations, with per-job `status` and
+`evaluation_status` showing their outcomes.
 Candidate-base mode trains/reuses the regular `base/` reconstruction, then
 adapts candidates for 3k steps from its PLY. If `base/` is missing, it is trained
-first; a candidate-only run does not retrain an existing base. If
+first; a candidate-only run does not retrain an existing base. If the required
+internally trained base still fails after retries, that experiment is marked
+`status: "skipped"` in `results.json` and its candidate reconstructions are not
+attempted. If
 `base_cloud_ply` is set in `orchestrator_config.json`, that external PLY is used
 directly instead and is never copied into the output tree or recorded in result
 files. Without candidate-base mode, each candidate trains from scratch.
@@ -333,8 +339,8 @@ results/<object-id>/<experiment-id>/results.json
 FastGS locations, training budgets, and the small set of optimizer defaults
 are in [training_config.json](training_config.json). `training_fastgs.py` uses
 FastGS's native trainer for scratch training and the FastGS adapter for
-PLY-initialized training. Add `--evaluate_metrics` to evaluate all result
-records under the configured results root; add `--redo` to force recomputation.
+PLY-initialized training. `evaluate_metrics.py` can also be run independently
+to evaluate saved reconstructions.
 
 ## Implementation layout
 

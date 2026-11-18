@@ -170,6 +170,7 @@ def main(argv=None, shared_cache=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--object-id")
     parser.add_argument("--experiment-id")
+    parser.add_argument("--reconstruction-id")
     parser.add_argument("--iteration", type=int,
                         help="Override every checkpoint iteration; default uses each reconstruction's recorded budget.")
     parser.add_argument("--results-root", type=Path, default=ROOT / "results")
@@ -197,12 +198,22 @@ def main(argv=None, shared_cache=None):
         paths = [path for path in paths if path.parent.parent.name == args.object_id]
     if args.experiment_id:
         paths = [path for path in paths if path.parent.name == args.experiment_id]
+    if args.reconstruction_id:
+        matched_paths = []
+        for path in paths:
+            with path.open(encoding="utf-8") as file:
+                result = json.load(file)
+            if args.reconstruction_id in load_reconstructions(result):
+                matched_paths.append(path)
+        paths = matched_paths
     if not paths:
         filters = []
         if args.object_id:
             filters.append(f"object ID {args.object_id!r}")
         if args.experiment_id:
             filters.append(f"experiment ID {args.experiment_id!r}")
+        if args.reconstruction_id:
+            filters.append(f"reconstruction ID {args.reconstruction_id!r}")
         print(f"No experiment results match {' and '.join(filters)}.")
         return
 
@@ -214,6 +225,14 @@ def main(argv=None, shared_cache=None):
         if args.views_root:
             dataset_dir = args.views_root.expanduser().resolve() / result["object_id"]
         reconstructions = load_reconstructions(result)
+        if args.reconstruction_id:
+            if args.reconstruction_id not in reconstructions:
+                raise ValueError(
+                    f"Reconstruction {args.reconstruction_id!r} not found in {result_path}"
+                )
+            reconstructions = {
+                args.reconstruction_id: reconstructions[args.reconstruction_id]
+            }
         metrics = result.setdefault("metrics", {})
         if "averages" in metrics and "per_view" in metrics:
             metrics = {"base": metrics}

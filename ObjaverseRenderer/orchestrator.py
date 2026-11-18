@@ -63,12 +63,22 @@ def build_parser():
         help="Train/use the shared 3k base for candidate reconstructions.",
     )
     parser.add_argument(
-        "--evaluate_metrics",
-        "--evaluate-metrics",
+        "--do-not-evaluate",
         action="store_true",
-        help="Evaluate all reconstructions in the configured results root.",
+        help="Skip automatic evaluation after reconstructions.",
     )
     parser.add_argument("--redo", action="store_true", help="Redo metric evaluation.")
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue to other reconstructions after all retries for a job fail.",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="Number of retries after the initial attempt for FastGS/evaluation failures.",
+    )
     return parser
 
 
@@ -218,6 +228,19 @@ def run_training(object_dir, model_dir, indices, iterations, init_ply, retrain):
     return expected
 
 
+def run_with_retries(operation, retries, description):
+    for attempt in range(retries + 1):
+        try:
+            return operation()
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            if attempt == retries:
+                raise
+            print(
+                f"{error.__class__.__name__} during {description} "
+                f"(attempt {attempt + 1}/{retries + 1}): {error}; retrying"
+            )
+
+
 def make_candidate_jobs(experiment, lattice, base_indices, trajectory_elevation):
     train = experiment["train"]
     seed = int(train.get("seed", 0))
@@ -319,21 +342,88 @@ def run_experiment(object_id, object_dir, global_train, experiment, args):
         ):
             result["reconstructions"].update(previous.get("reconstructions", {}))
     if run_base:
-        run_training(
-            object_dir,
-            base_model_dir,
-            base_indices,
-            base_iterations,
-            None,
-            args.retrain if args.candidate_id is None else False,
-        )
-    if run_base or (uses_internal_base and base_ply.is_file()):
-        result["reconstructions"]["base"] = {
-            "status": "complete",
+        base_record = {
+            "status": "running",
             "iterations": base_iterations,
             "reconstruction_path": str(base_model_dir),
             "train_lattice_indices": base_indices,
         }
+        result["reconstructions"]["base"] = base_record
+        save_json(result_path, result)
+        try:
+            checkpoint = run_with_retries(
+                lambda: run_training(
+                    object_dir,
+                    base_model_dir,
+                    base_indices,
+                    base_iterations,
+                    None,
+                    args.retrain if args.candidate_id is None else False,
+                ),
+                args.retries,
+                "base reconstruction",
+            )
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            base_record.update(status="failed", error=str(error))
+            if args.use_candidate_base is not None and uses_internal_base:
+                result.update(
+                    status="skipped",
+                    skip_reason=(
+                        "Candidate-base experiment skipped because the base "
+                        f"reconstruction failed: {error}"
+                    ),
+                )
+                save_json(result_path, result)
+                print(
+                    f"Skipping experiment {object_id}/{experiment_id}: "
+                    f"candidate base reconstruction failed: {error}"
+                )
+                return
+            save_json(result_path, result)
+            if not args.continue_on_error:
+                raise
+            print(f"Continuing after base reconstruction failed: {error}")
+        else:
+            base_record.update(
+                status="complete",
+                checkpoint_path=str(checkpoint),
+            )
+            base_record.pop("error", None)
+            save_json(result_path, result)
+            if not args.do_not_evaluate:
+                evaluate_reconstruction_with_retries(
+                    result_path, result, "base", args
+                )
+    if "base" not in result["reconstructions"] and (
+        run_base or (uses_internal_base and base_ply.is_file())
+    ):
+        result["reconstructions"]["base"] = {
+            "status": "complete",
+            "iterations": base_iterations,
+            "reconstruction_path": str(base_model_dir),
+            "checkpoint_path": str(base_ply),
+            "train_lattice_indices": base_indices,
+        }
+        save_json(result_path, result)
+        if not run_base and uses_internal_base and not args.do_not_evaluate:
+            evaluate_reconstruction_with_retries(
+                result_path, result, "base", args
+            )
+    elif not run_base and uses_internal_base and base_ply.is_file():
+        base_record = result["reconstructions"]["base"]
+        base_record.update(
+            status="complete",
+            iterations=base_iterations,
+            reconstruction_path=str(base_model_dir),
+            checkpoint_path=str(base_ply),
+            train_lattice_indices=base_indices,
+        )
+        base_record.pop("error", None)
+        save_json(result_path, result)
+        if not args.do_not_evaluate:
+            evaluate_reconstruction_with_retries(
+                result_path, result, "base", args
+            )
 
     candidate_base_ply = None
     candidate_iterations = int(TRAINING_CONFIG["candidate_iterations"])
@@ -347,8 +437,14 @@ def run_experiment(object_id, object_dir, global_train, experiment, args):
                 )
         else:
             if not base_ply.is_file():
-                raise RuntimeError(f"Base reconstruction is missing its PLY: {base_ply}")
-            candidate_base_ply = base_ply
+                if args.continue_on_error and result["reconstructions"].get(
+                    "base", {}
+                ).get("status") == "failed":
+                    candidate_base_ply = None
+                else:
+                    raise RuntimeError(f"Base reconstruction is missing its PLY: {base_ply}")
+            else:
+                candidate_base_ply = base_ply
 
     save_json(result_path, result)
 
@@ -367,25 +463,49 @@ def run_experiment(object_id, object_dir, global_train, experiment, args):
         model_dir = base_dir / candidate_id
         if model_dir == base_model_dir:
             raise ValueError(f"Candidate ID conflicts with reserved path: {candidate_id}")
-        checkpoint = run_training(
-            object_dir,
-            model_dir,
-            candidate["train_indices"],
-            candidate_iterations,
-            candidate_base_ply,
-            args.retrain,
-        )
-        result["reconstructions"][candidate_id] = {
-            "status": "complete",
+        record = {
+            "status": "running",
             "iterations": candidate_iterations,
             "reconstruction_path": str(model_dir),
-            "checkpoint_path": str(checkpoint),
             "train_lattice_indices": candidate["train_indices"],
         }
+        result["reconstructions"][candidate_id] = record
         save_json(result_path, result)
+        if args.use_candidate_base and uses_internal_base and candidate_base_ply is None:
+            error = "Candidate base reconstruction failed; its PLY is unavailable."
+            record.update(status="failed", error=error)
+            save_json(result_path, result)
+            continue
+        try:
+            checkpoint = run_with_retries(
+                lambda: run_training(
+                    object_dir,
+                    model_dir,
+                    candidate["train_indices"],
+                    candidate_iterations,
+                    candidate_base_ply,
+                    args.retrain,
+                ),
+                args.retries,
+                f"{candidate_id} reconstruction",
+            )
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            record.update(status="failed", error=str(error))
+            save_json(result_path, result)
+            if not args.continue_on_error:
+                raise
+            print(f"Continuing after {candidate_id} reconstruction failed: {error}")
+            continue
+        record.update(status="complete", checkpoint_path=str(checkpoint))
+        record.pop("error", None)
+        save_json(result_path, result)
+        if not args.do_not_evaluate:
+            evaluate_reconstruction_with_retries(
+                result_path, result, candidate_id, args
+            )
 
 
-def evaluate_all(redo, object_id=None, experiment_id=None):
+def evaluate_one(result_path, result, reconstruction_id, redo):
     command = [
         PYTHON,
         str(EVALUATOR),
@@ -395,19 +515,61 @@ def evaluate_all(redo, object_id=None, experiment_id=None):
         str(TRAINING_CONFIG["fastgs_dir"]),
         "--python",
         PYTHON,
+        "--object-id",
+        result["object_id"],
+        "--experiment-id",
+        result["experiment_id"],
+        "--reconstruction-id",
+        reconstruction_id,
     ]
-    if object_id is not None:
-        command.extend(["--object-id", object_id])
-    if experiment_id is not None:
-        command.extend(["--experiment-id", experiment_id])
     if redo:
         command.append("--redo")
     subprocess.run(command, check=True)
+    updated = load_json(result_path)
+    metrics = updated.get("metrics", {}).get(reconstruction_id)
+    if not (
+        isinstance(metrics, dict)
+        and "averages" in metrics
+        and "per_view" in metrics
+    ):
+        raise RuntimeError(
+            f"Metric evaluation did not complete for {result['object_id']}/"
+            f"{result['experiment_id']}/{reconstruction_id}"
+        )
+    result.clear()
+    result.update(updated)
+
+
+def evaluate_reconstruction_with_retries(result_path, result, name, args):
+    record = result["reconstructions"][name]
+    record["evaluation_status"] = "running"
+    record.pop("evaluation_error", None)
+    save_json(result_path, result)
+    try:
+        run_with_retries(
+            lambda: evaluate_one(result_path, result, name, args.redo),
+            args.retries,
+            f"{name} metric evaluation",
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        record = result["reconstructions"][name]
+        record.update(evaluation_status="failed", evaluation_error=str(error))
+        save_json(result_path, result)
+        if not args.continue_on_error:
+            raise
+        print(f"Continuing after {name} metric evaluation failed: {error}")
+    else:
+        record = result["reconstructions"][name]
+        record["evaluation_status"] = "complete"
+        record.pop("evaluation_error", None)
+        save_json(result_path, result)
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.retries < 0:
+        parser.error("--retries must be non-negative")
     object_ids = discover_objects(args.object_id)
     if not object_ids:
         raise FileNotFoundError(f"No GLBs found in {CONFIG['objects_root']}")
@@ -417,10 +579,6 @@ def main(argv=None):
         object_dir, global_train = ensure_views(object_id, args.rerender)
         for experiment in experiments:
             run_experiment(object_id, object_dir, global_train, experiment, args)
-
-    if args.evaluate_metrics:
-        evaluate_all(args.redo, args.object_id, args.experiment_id)
-
 
 if __name__ == "__main__":
     main()
