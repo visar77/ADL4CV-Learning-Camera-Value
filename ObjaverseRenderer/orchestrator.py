@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import random
 import shutil
 import subprocess
 import sys
@@ -280,10 +281,7 @@ def make_candidate_jobs(experiment, lattice, base_indices, trajectory_elevation)
     return jobs
 
 
-def run_experiment(object_id, object_dir, global_train, experiment, args):
-    experiment_id = experiment["id"]
-    base_dir = CONFIG["reconstructions_root"] / object_id / experiment_id
-    result_path = CONFIG["results_root"] / object_id / experiment_id / "results.json"
+def plan_candidates(object_id, object_dir, global_train, experiments):
     metadata_path = object_dir / "metadata.json"
     metadata = load_json(metadata_path) if metadata_path.is_file() else {}
     lattice_size = int(metadata.get("lattice_size", len(global_train["frames"])))
@@ -293,19 +291,49 @@ def run_experiment(object_id, object_dir, global_train, experiment, args):
             f"({len(global_train['frames'])}) for {object_id}"
         )
     lattice = fibonacci_lattice(lattice_size)
-    train = experiment["train"]
-    seed = int(train.get("seed", 0))
     trajectory_elevation = float(metadata.get("trajectory_elevation_deg", 20.0))
-    base_indices = select_indices(
-        train["strategy"],
-        int(train["count"]),
-        lattice,
-        seed=seed,
-        trajectory_elevation_deg=trajectory_elevation,
-    )
-    candidates = make_candidate_jobs(
-        experiment, lattice, base_indices, trajectory_elevation
-    )
+    plans = {}
+    random_jobs = []
+    used = set()
+    for experiment in experiments:
+        train = experiment["train"]
+        seed = int(train.get("seed", 0))
+        rng = random.Random(seed)
+        base = select_indices(
+            train["strategy"], int(train["count"]), lattice, seed=seed,
+            trajectory_elevation_deg=trajectory_elevation,
+        )
+        jobs = make_candidate_jobs(experiment, lattice, base, trajectory_elevation)
+        plans[experiment["id"]] = base, jobs
+        for job in jobs:
+            if job["strategy"] == "random":
+                random_jobs.append((job, rng))
+            elif job["strategy"] != "redundancy":
+                used.add(job["train_indices"][-1])
+
+    # Reserve all distinct original draws before filling the collisions.
+    collisions = []
+    for job, rng in random_jobs:
+        camera = job["train_indices"][-1]
+        if camera in used:
+            collisions.append((job, rng))
+        used.add(camera)
+
+    for job, rng in collisions:
+        excluded = used.union(job["train_indices"][:-1])
+        available = [camera for camera in range(lattice_size) if camera not in excluded]
+        if not available:
+            raise ValueError("No unused camera remains for a random candidate in this suite.")
+        camera = rng.choice(available)
+        used.add(camera)
+        job["train_indices"][-1] = camera
+        job["model_name"] = f"{job['id']}-camera-{camera}"
+    return plans
+
+
+def run_experiment(object_id, object_dir, experiment_id, base_indices, candidates, args):
+    base_dir = CONFIG["reconstructions_root"] / object_id / experiment_id
+    result_path = CONFIG["results_root"] / object_id / experiment_id / "results.json"
     if args.candidate_id is not None:
         candidate_ids = {candidate["id"] for candidate in candidates}
         if args.candidate_id not in candidate_ids:
@@ -573,12 +601,18 @@ def main(argv=None):
     object_ids = discover_objects(args.object_id)
     if not object_ids:
         raise FileNotFoundError(f"No GLBs found in {CONFIG['objects_root']}")
-    experiments = load_experiments(args.experiment_id)
+    experiments = load_experiments()
+    experiment_ids = [experiment["id"] for experiment in experiments]
+    if args.experiment_id is not None and args.experiment_id not in experiment_ids:
+        raise ValueError(f"Unknown experiment ID: {args.experiment_id}")
+    selected_ids = [args.experiment_id] if args.experiment_id is not None else experiment_ids
 
     for object_id in object_ids:
         object_dir, global_train = ensure_views(object_id, args.rerender)
-        for experiment in experiments:
-            run_experiment(object_id, object_dir, global_train, experiment, args)
+        plans = plan_candidates(object_id, object_dir, global_train, experiments)
+        for experiment_id in selected_ids:
+            base, candidates = plans[experiment_id]
+            run_experiment(object_id, object_dir, experiment_id, base, candidates, args)
 
 if __name__ == "__main__":
     main()
