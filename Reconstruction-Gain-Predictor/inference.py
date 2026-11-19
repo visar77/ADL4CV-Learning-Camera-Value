@@ -10,7 +10,17 @@ from experiments import select_samples
 from runtime import load_run, score_samples
 from devices import resolve_device
 from paths import resolve_reference
-from predictor import GainEstimator
+from predictor import GainEstimator, candidate_utility
+
+
+def report_predictions(rows, gains, rank):
+    utilities = candidate_utility(gains)
+    for row, gain, utility in zip(rows, gains.tolist(), utilities.tolist(), strict=True):
+        row.update(predicted_gain=gain, predicted_utility=utility)
+    if rank:
+        rows.sort(key=lambda row: row["predicted_utility"], reverse=True)
+    print(json.dumps(rows, indent=2, allow_nan=False))
+    return rows
 
 
 def predict_request(args):
@@ -48,12 +58,8 @@ def predict_request(args):
                                camera_angle_x=request.get("camera_angle_x"),
                                candidate_image_size=request.get("candidate_image_size"),
                                camera_convention=request.get("camera_convention", "blender"))
-    rows = [{"candidate": identifier, "predicted_gain": value, "target": predictor.config["target"]}
-            for identifier, value in zip(ids, values.tolist())]
-    if args.rank:
-        rows.sort(key=lambda row: row["predicted_gain"], reverse=True)
-    print(json.dumps(rows, indent=2, allow_nan=False))
-    return rows
+    rows = [{"candidate": identifier, "target": predictor.config["target"]} for identifier in ids]
+    return report_predictions(rows, values, args.rank)
 
 
 def main(argv=None):
@@ -95,16 +101,13 @@ def main(argv=None):
         from dataset import context_key
         if len({context_key(s) for s in samples}) != 1:
             raise ValueError("--rank requires one physical context; select --scene-id and --experiment-id.")
-    values = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint).flatten().tolist()
-    rows = [{"sample": sample_key(s), "candidate": s.candidate_id, "predicted_gain": value,
+    values = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint).flatten()
+    rows = [{"sample": sample_key(s), "candidate": s.candidate_id,
              "target": checkpoint["target"], "ground_truth_relative_gain": s.psnr_gain,
              "predicted_delta_db": value if checkpoint["target"] == "delta-db" else
                  value * abs(s.base_psnr) if s.base_psnr is not None else None}
-            for s, value in zip(samples, values)]
-    if args.rank:
-        rows.sort(key=lambda row: row["predicted_gain"], reverse=True)
-    print(json.dumps(rows, indent=2, allow_nan=False))
-    return rows
+            for s, value in zip(samples, values.tolist())]
+    return report_predictions(rows, values, args.rank)
 
 
 if __name__ == "__main__":

@@ -16,9 +16,11 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from dataset import audit_samples, digest, load_manifest, sample_key
 from experiments import make_splits, select_samples, selection_metrics, target_values, observation_signatures
 from features import FeatureStore, atomic_save
+from geometry import COVERAGE_DIM
+from model import DEFAULT_HEAD_WIDTH, FEATURE_HEADS
 from paths import relative_path
 from devices import resolve_device
-from runtime import (MODELS, create_model, forward_toy, input_matrix, normalize_matrix,
+from runtime import (MODELS, create_model, forward_toy, head_matrix, input_matrix, normalize_matrix,
                      predict_normalized, toy_loader)
 
 
@@ -111,7 +113,9 @@ def train(args):
             raise ValueError("Cached head training requires --features. Run features.py once first.")
         store = FeatureStore(args.features)
         # Hash source images and materialize features once, never inside the epoch loop.
-        all_features = store.matrix(samples)
+        embeddings = store.matrix(samples)
+        config.update(head_type=args.head_type, embedding_dim=embeddings.shape[1])
+        all_features = head_matrix(samples, embeddings, config)
         indices = {sample_key(s): i for i, s in enumerate(samples)}
         matrices = {name: all_features[[indices[sample_key(s)] for s in group]]
                     for name, group in groups.items()}
@@ -122,9 +126,19 @@ def train(args):
     elif args.model != "toy":
         matrices = {name: input_matrix(group, config) if group else None for name, group in groups.items()}
     if matrices:
-        config["input_dim"] = matrices["train"].shape[1]
-        config["input_mean"] = matrices["train"].mean(0)
-        config["input_std"] = matrices["train"].std(0, unbiased=False).clamp_min(1e-5)
+        train_inputs = matrices["train"]
+        if config.get("head_type") == "pose":
+            # Contexts can have different view counts at inference. Only the
+            # fixed-width embedding uses fitted feature statistics.
+            train_inputs = train_inputs[:, :config["embedding_dim"]]
+        config["input_dim"] = train_inputs.shape[1]
+        config["input_mean"] = train_inputs.mean(0)
+        config["input_std"] = train_inputs.std(0, unbiased=False).clamp_min(1e-5)
+        if config.get("head_type") == "coverage":
+            # These four features have fixed units, even if a training fold
+            # contains only one view count or a constant angular separation.
+            config["input_mean"][-COVERAGE_DIM:] = 0
+            config["input_std"][-COVERAGE_DIM:] = 1
     model = create_model(config).to(args.device)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.log_dir.mkdir(parents=True, exist_ok=True)
@@ -307,8 +321,10 @@ def parse_args(argv=None, defaults=None):
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.)
     parser.add_argument("--dropout", type=float, default=0.)
-    parser.add_argument("--head-hidden-dim", type=int, default=64,
-                        help="Cached/LVSM gain-head hidden width (default: 64)")
+    parser.add_argument("--head", dest="head_type", choices=FEATURE_HEADS, default="mlp",
+                        help="Cached/LVSM gain head (default: mlp)")
+    parser.add_argument("--head-hidden-dim", type=int,
+                        help="Cached/LVSM gain-head width (default: 64 for mlp, 32 for coverage/pose)")
     parser.add_argument("--head-hidden-layers", type=int, default=1,
                         help="Number of hidden layers in the cached/LVSM gain head (default: 1)")
     parser.add_argument("--ridge", type=float, default=1.)
@@ -327,6 +343,8 @@ def parse_args(argv=None, defaults=None):
     if defaults:
         parser.set_defaults(**defaults)
     args = parser.parse_args(argv)
+    if args.head_hidden_dim is None:
+        args.head_hidden_dim = DEFAULT_HEAD_WIDTH[args.head_type]
     if min(args.validation_batch_size, args.validation_batches, args.validation_window) < 1:
         parser.error("Validation batch size, batch budget, and window must be positive")
     args.device = resolve_device(args.device)

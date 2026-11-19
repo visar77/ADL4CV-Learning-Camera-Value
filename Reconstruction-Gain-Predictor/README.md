@@ -197,20 +197,15 @@ The cache contains `features.pt`, phase timings, and resumable context/candidate
 | `view-count` | Ridge regression on log context-view count |
 | `geometry` | Ridge regression on camera distances, directions, count, and relative candidate position |
 | `toy` | Small CNN with context/candidate pose conditioning |
-| `cached` / `lvsm` | MLP head on frozen cached embeddings; both names use the same training path |
+| `cached` / `lvsm` | Gain head on frozen candidate embeddings, optionally with relative camera poses |
 
-For cached/LVSM training, the gain head is configurable with `--head-hidden-dim` and `--head-hidden-layers`. Defaults (`64` and `1`) preserve the original small head. For example, try a 3-layer, 512-wide head with dropout:
+**Use `--head pose` for experiments spanning orbit and free-moving cameras.** For each context camera the head computes its pose in the candidate camera's frame. Three translation components describe where it is, and two rotation-matrix columns encode its full orientation, including roll. The third column is determined by the first two. This representation requires calibrated camera poses and has no object-center or common look-at assumption.
 
-```bash
-python train.py --dataset data/processed/all_three.jsonl \
-  --model cached --features data/features/all_three_lvsm512/features.pt \
-  --mode context --balance-scenes --epochs 100 --dropout 0.2 \
-  --head-hidden-dim 512 --head-hidden-layers 3 \
-  --output checkpoints/all_three_lvsm_large/model.pt \
-  --log-dir runs/all_three_lvsm_large
-```
+Translations use the RMS distance of context camera centers from their centroid as a length scale, followed by elementwise `asinh` to compress large offsets. For one center or negligible spread the scale falls back to one input unit. Use consistent pose units for these trajectories. The geometry branch is independent of the world origin, world orientation, and context ordering. LVSM has its own existing first-context orientation convention.
 
-The pretrained LVSM backbone remains frozen; these options enlarge only the trainable gain head. A larger head is not necessarily more accurate: with a small number of independent contexts it can overfit, so compare against the default head on the same saved split and prefer held-out validation/test results.
+A shared 16-unit layer encodes each relative pose jointly. Mean and max pooling over valid views, plus log view count, summarize the set. A linear pose score and a 32-unit correction conditioned on both the pose summary and the LVSM embedding predict signed gain. LVSM supplies image and intrinsic information relevant to visibility. The head has 25,890 trainable parameters with a 768-D embedding. It uses the same feature cache for all pose regimes. The two alternative heads are the default embedding-only `--head mlp` and the orbit-specific `--head coverage`, whose geometry branch summarizes only viewing-direction separation and count.
+
+Add `--head pose` to the cached training command. Compare it with a width-matched MLP on the same scene splits using top-choice regret and signed-gain MAE. Orbit-only labels couple camera position and orientation. Testing transfer to free motion requires held-out scenes with motions such as lateral translation at fixed orientation and roll at fixed position, together with measured gains. These tests also probe whether the pooled LVSM embedding carries enough information about occlusion and scene depth.
 
 | Mode | Intended experiment |
 |---|---|
@@ -240,7 +235,9 @@ Reports contain normalized MSE, MAE/RMSE, dB error when available, and per-conte
 
 ### 5. Predict on new inputs: `inference.py` and `predictor.py`
 
-`inference.py --input examples/inference_request.json` is the direct CLI. The example has `context` entries with `image`, `pose`, and `intrinsics`, and `candidates` entries with `id`, `pose`, and `intrinsics`. Image paths are relative to the request file. No labels, training manifest, or feature cache is needed; `--rank` sorts candidates by predicted gain.
+`inference.py --input examples/inference_request.json` is the direct CLI. The example has `context` entries with `image`, `pose`, and `intrinsics`, and `candidates` entries with `id`, `pose`, and `intrinsics`. Image paths are relative to the request file.
+
+Both inference modes report `predicted_gain` for using the candidate and `predicted_utility = max(0, predicted_gain)` for the choice between using it and keeping the base. The conversion happens in the checkpoint's target units after reversing target standardization. For example, a predicted gain of −0.3 dB has utility 0 dB. With `--rank`, equal utilities retain their input order. If all utilities are zero, keeping the base is tied for best. Training labels, regression errors, and the existing forced-capture ranking metrics use signed gains. Measured reconstruction quality can fall when FastGS uses the new view.
 
 `predictor.py` provides the same behavior as a Python API:
 
@@ -249,13 +246,13 @@ import math
 from predictor import GainEstimator
 
 predictor = GainEstimator("checkpoints/run/model.pt")  # Auto-selects CUDA when available.
-scores = predictor.predict(
+utilities = predictor.predict_utility(
     context_images=images, context_poses=poses, candidate_poses=candidates,
     camera_angle_x=math.radians(50), camera_convention="blender",
 )
 ```
 
-Accepts image paths, PIL/NumPy RGB images, or PyTorch `[N,3,H,W]` tensors; floating input is `[0,1]`, uint8 is `[0,255]`. Poses are camera-to-world matrices; use `opencv` for OpenCV axes. Supply horizontal FOV in radians or context/candidate intrinsics as pixel K or normalized `[fx/W,fy/H,cx/W,cy/H]`. Pixel K refers to original dimensions; candidate size defaults to the first image.
+Use `predict()` to retrieve signed gains. If you need both outputs, call `candidate_utility(gains)` from `predictor.py` on that tensor to reuse the same predictions. Both API methods accept image paths, PIL/NumPy RGB images, or PyTorch `[N,3,H,W]` tensors. Floating input is `[0,1]` and uint8 is `[0,255]`. Poses are camera-to-world matrices. Use `opencv` for OpenCV axes. Supply horizontal FOV in radians or context/candidate intrinsics as pixel K or normalized `[fx/W,fy/H,cx/W,cy/H]`. Pixel K refers to original dimensions. Candidate size defaults to the first image.
 
 Loading/resizing, camera conversion, rays, and scene normalization happen internally. The predictor loads the backbone once and shares one context encoding across candidates per call. `candidate_batch_size` controls decoder memory. Keep the head and matching backbone weights for deployment; their saved relative reference is used automatically, with `--lvsm-checkpoint` / `backbone_checkpoint=` as an override.
 

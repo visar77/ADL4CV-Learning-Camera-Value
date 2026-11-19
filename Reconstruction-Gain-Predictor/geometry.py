@@ -5,6 +5,51 @@ import torch
 from torch import Tensor
 
 CAMERA_VERSION = "opencv-pixel-centers-context-frame-v1"
+COVERAGE_DIM = 4
+RELATIVE_POSE_DIM = 9  # Three offsets and the first two columns of a rotation.
+
+
+def relative_camera_poses(poses: Tensor, candidate: Tensor, mask: Tensor) -> Tensor:
+    """Each context camera in candidate coordinates, plus a trailing validity flag."""
+    context = poses.reshape(*mask.shape, 4, 4)
+    query = candidate.reshape(-1, 1, 4, 4)
+    count = mask.sum(1, keepdim=True)
+    if not count.all():
+        raise ValueError("Every context must contain at least one valid camera.")
+
+    centers = context[..., :3, 3]
+    # Subtract one camera first so coincident centers have exactly zero spread.
+    first = mask.long().argmax(1)
+    offsets = centers - centers[torch.arange(len(centers), device=poses.device), first][:, None]
+    centroid = offsets.masked_fill(~mask[..., None], 0).sum(1) / count
+    squared_radius = (offsets - centroid[:, None]).square().sum(-1)
+    spread = (squared_radius.masked_fill(~mask, 0).sum(1, keepdim=True) / count).sqrt()
+    scale = torch.where(spread > 1e-6, spread, torch.ones_like(spread))
+
+    world_to_query = query[..., :3, :3].transpose(-1, -2)
+    displacement = (world_to_query @ (centers - query[..., :3, 3]).unsqueeze(-1)).squeeze(-1)
+    translation = torch.asinh(displacement / scale[..., None])
+    axes = world_to_query @ context[..., :3, :2]
+    relation = torch.cat((translation, axes.transpose(-1, -2).flatten(-2)), dim=-1)
+    return torch.cat((relation.masked_fill(~mask[..., None], 0), mask[..., None].to(poses.dtype)), dim=-1)
+
+
+def camera_coverage(poses: Tensor, candidate: Tensor, mask: Tensor) -> Tensor:
+    """Log context count and nearest, mean, farthest angular separations.
+
+    On the renderer's centered orbit, squared chord distance between optical
+    axes, divided by four, is 0 for the same direction and 1 for opposite views.
+    """
+    axes = poses.reshape(*mask.shape, 4, 4)[..., :3, 2]
+    query = candidate.reshape(-1, 1, 4, 4)[..., :3, 2]
+    separation = (axes - query).square().sum(-1) / 4
+    count = mask.sum(1)
+    if not count.all():
+        raise ValueError("Every context must contain at least one valid camera.")
+    return torch.stack((count.to(poses.dtype).log(),
+                        separation.masked_fill(~mask, torch.inf).amin(1),
+                        separation.masked_fill(~mask, 0).sum(1) / count,
+                        separation.masked_fill(~mask, -torch.inf).amax(1)), dim=1)
 
 
 def to_opencv(poses: Tensor, convention: str) -> Tensor:

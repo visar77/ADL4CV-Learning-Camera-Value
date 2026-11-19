@@ -9,8 +9,14 @@ import torch
 from PIL import Image
 
 from geometry import geometry_features, to_opencv
+from model import feature_head_inputs
 from runtime import load_frozen_backbone, load_run, normalize_matrix
 from devices import resolve_device, compute_precision, autocast_for
+
+
+def candidate_utility(predicted_gain: torch.Tensor) -> torch.Tensor:
+    """Predicted value when keeping the base is available at zero gain."""
+    return predicted_gain.clamp_min(0)
 
 
 def _context_images(images, image_size):
@@ -135,19 +141,23 @@ class GainEstimator:
                 qk = _intrinsics(candidate_intrinsics, [candidate_image_size] * count, camera_angle_x)
                 if self.backbone is None:
                     self.backbone = load_frozen_backbone(self.config, self.backbone_checkpoint, self.device)
-                if self.backbone.feature_dim != self.config["input_dim"]:
+                if self.backbone.feature_dim != self.config.get("embedding_dim", self.config["input_dim"]):
                     raise ValueError("Backbone feature width does not match the trained head.")
                 precision = self.config["backbone_spec"].get("precision", "fp32")
                 precision = getattr(self.backbone, "compute_precision", None) or compute_precision(precision, self.device)
                 with autocast_for(precision, self.device):
                     state = self.backbone.encode_context(images.to(self.device), poses, mask, ck[None].to(self.device))
                     for start in range(0, count, self.candidate_batch_size):
+                        q = queries[:, start:start+self.candidate_batch_size]
                         features = self.backbone.decode_candidates(
-                            state, queries[:, start:start+self.candidate_batch_size],
+                            state, q,
                             qk[None, start:start+self.candidate_batch_size].to(self.device))[0].float()
-                        normalized = normalize_matrix(features.cpu(), self.config).to(self.device)
                         # Head weights and cached feature normalization are FP32.
                         with torch.autocast(torch.device(self.device).type, enabled=False):
+                            features = feature_head_inputs(self.config.get("head_type", "mlp"), features,
+                                                           poses.expand(q.size(1), -1, -1), q[0],
+                                                           mask.expand(q.size(1), -1))
+                            normalized = normalize_matrix(features.cpu(), self.config).to(self.device)
                             values.append(self.head(normalized).cpu())
             elif kind == "toy":
                 for start in range(0, count, self.candidate_batch_size):
@@ -168,3 +178,8 @@ class GainEstimator:
         if not torch.isfinite(result).all():
             raise ValueError("Predictor returned a non-finite gain.")
         return result
+
+    def predict_utility(self, context_images, context_poses, candidate_poses, **camera_options):
+        """Report nonnegative candidate utilities in the checkpoint's gain units."""
+        gains = self.predict(context_images, context_poses, candidate_poses, **camera_options)
+        return candidate_utility(gains)

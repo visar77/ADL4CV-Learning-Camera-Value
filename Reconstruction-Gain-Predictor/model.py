@@ -5,7 +5,8 @@ from __future__ import annotations
 import urllib.request
 from abc import ABC, abstractmethod
 
-from geometry import apply_frame, context_frame, rays
+from geometry import (COVERAGE_DIM, RELATIVE_POSE_DIM, apply_frame, camera_coverage,
+                      context_frame, rays, relative_camera_poses)
 from pathlib import Path
 
 import torch
@@ -328,18 +329,73 @@ class FeatureGainHead(nn.Sequential):
         super().__init__(*layers)
 
 
+class CoverageGainHead(nn.Module):
+    """Linear camera-coverage estimate plus a candidate-conditioned correction."""
+
+    def __init__(self, input_dim: int, dropout: float = 0.0,
+                 hidden_dim: int = 32, hidden_layers: int = 1):
+        super().__init__()
+        self.coverage_gain = nn.Linear(COVERAGE_DIM, 1, bias=False)
+        self.correction = FeatureGainHead(input_dim, dropout, hidden_dim, hidden_layers)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        coverage = inputs[..., -COVERAGE_DIM:]
+        return self.coverage_gain(coverage) + self.correction(inputs)
+
+
+class PoseGainHead(nn.Module):
+    """Encode each full context-to-candidate pose before pooling across views."""
+
+    def __init__(self, embedding_dim: int, dropout: float = 0.0,
+                 hidden_dim: int = 32, hidden_layers: int = 1):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        relation_width = 16
+        self.pose_encoder = nn.Sequential(nn.Linear(RELATIVE_POSE_DIM, relation_width), nn.GELU())
+        summary_dim = 2 * relation_width + 1
+        self.pose_gain = nn.Linear(summary_dim, 1, bias=False)
+        self.correction = FeatureGainHead(embedding_dim + summary_dim, dropout, hidden_dim, hidden_layers)
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        embedding = inputs[:, :self.embedding_dim]
+        views = inputs[:, self.embedding_dim:].reshape(len(inputs), -1, RELATIVE_POSE_DIM + 1)
+        valid = views[..., -1:].bool()
+        tokens = self.pose_encoder(views[..., :-1])
+        count = valid.sum(1).to(tokens.dtype)
+        mean = tokens.masked_fill(~valid, 0).sum(1) / count
+        maximum = tokens.masked_fill(~valid, -torch.inf).amax(1)
+        summary = torch.cat((mean, maximum, count.log()), dim=-1)
+        return self.pose_gain(summary) + self.correction(torch.cat((embedding, summary), dim=-1))
+
+
+FEATURE_HEADS = {"mlp": FeatureGainHead, "coverage": CoverageGainHead, "pose": PoseGainHead}
+DEFAULT_HEAD_WIDTH = {"mlp": 64, "coverage": 32, "pose": 32}
+
+
+def feature_head_inputs(head_type, embeddings, poses, candidate, mask):
+    if head_type == "pose":
+        relations = relative_camera_poses(poses, candidate, mask)
+        return torch.cat((embeddings, relations.flatten(1)), dim=-1)
+    if head_type == "coverage":
+        coverage = camera_coverage(poses, candidate, mask)
+        return torch.cat((embeddings, coverage), dim=-1)
+    return embeddings
+
+
 class LVSMGainPredictor(nn.Module):
     """Online wrapper; training uses the same head on cached features."""
     def __init__(self, checkpoint: Path, feature_dim=768, image_size=DEFAULT_IMAGE_SIZE,
                  latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL, dropout=0.0,
-                 head_hidden_dim=64, head_hidden_layers=1):
+                 head_hidden_dim=None, head_hidden_layers=1, head_type="mlp"):
         super().__init__()
         self.backbone = LVSMFeatureBackbone(checkpoint, image_size, latent_tokens, checkpoint_url)
-        self.regression_head = FeatureGainHead(self.backbone.feature_dim, dropout,
-                                               head_hidden_dim, head_hidden_layers)
+        self.head_type = head_type
+        input_dim = self.backbone.feature_dim + (COVERAGE_DIM if head_type == "coverage" else 0)
+        width = DEFAULT_HEAD_WIDTH[head_type] if head_hidden_dim is None else head_hidden_dim
+        self.regression_head = FEATURE_HEADS[head_type](input_dim, dropout, width, head_hidden_layers)
 
     def forward(self, images, context_poses, candidate_pose, mask,
                 context_intrinsics=None, candidate_intrinsics=None):
         context = self.backbone.encode_context(images, context_poses, mask, context_intrinsics)
         encoded = self.backbone.decode_candidates(context, candidate_pose[:, None], candidate_intrinsics[:, None])[:, 0]
-        return self.regression_head(encoded)
+        return self.regression_head(feature_head_inputs(self.head_type, encoded, context_poses, candidate_pose, mask))

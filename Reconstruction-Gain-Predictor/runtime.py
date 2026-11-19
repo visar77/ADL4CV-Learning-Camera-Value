@@ -12,7 +12,8 @@ from dataset import GainDataset, collate_gain_samples, collate_cameras
 from experiments import pose_features
 from features import FeatureStore, device_batch, file_sha256, compatible_implementation
 from geometry import CAMERA_VERSION
-from model import BACKBONES, ContextPoseCNN, FeatureGainHead, LVSM_CHECKPOINT_NAME
+from model import (BACKBONES, DEFAULT_HEAD_WIDTH, FEATURE_HEADS, ContextPoseCNN,
+                   LVSM_CHECKPOINT_NAME, feature_head_inputs)
 from paths import resolve_reference
 from devices import resolve_device, compute_precision, autocast_for
 
@@ -24,9 +25,10 @@ def create_model(config):
     if kind == "toy":
         return ContextPoseCNN(image_size=config["image_size"], dropout=config.get("dropout", 0.))
     if kind in {"cached", "lvsm"}:
-        return FeatureGainHead(config["input_dim"], config.get("dropout", 0.),
-                               config.get("head_hidden_dim", 64),
-                               config.get("head_hidden_layers", 1))
+        head_type = config.get("head_type", "mlp")
+        return FEATURE_HEADS[head_type](config["input_dim"], config.get("dropout", 0.),
+                                        config.get("head_hidden_dim", DEFAULT_HEAD_WIDTH[head_type]),
+                                        config.get("head_hidden_layers", 1))
     if kind in {"mean", "view-count", "geometry"}:
         return nn.Linear(config["input_dim"], 1)
     raise ValueError(f"Unknown model type {kind}")
@@ -48,6 +50,15 @@ def load_frozen_backbone(config, checkpoint_path=None, device="auto"):
         raise ValueError("Downloaded backbone does not match this head; provide its original checkpoint.")
     backbone.compute_precision = compute_precision(spec["precision"], device)
     return backbone
+
+
+def head_matrix(samples, embeddings, config):
+    head_type = config.get("head_type", "mlp")
+    if head_type == "mlp":
+        return embeddings
+    batch = collate_cameras(samples)
+    return feature_head_inputs(head_type, embeddings, batch["context_poses"],
+                               batch["candidate_pose"], batch["mask"])
 
 
 def input_matrix(samples, config, features=None, backbone_checkpoint=None, device="auto"):
@@ -79,7 +90,7 @@ def input_matrix(samples, config, features=None, backbone_checkpoint=None, devic
                     batch = device_batch(collate_cameras([sample]), device)
                     values.append(backbone.decode_candidates(contexts[key], batch["candidate_pose"][:, None],
                                                              batch["candidate_intrinsics"][:, None])[0, 0].float().cpu())
-        return torch.stack(values)
+        return head_matrix(samples, torch.stack(values), config)
     path = features or config.get("features_path")
     if not path or not Path(path).is_file():
         reference = config.get("backbone_checkpoint") or Path(__file__).parent / LVSM_CHECKPOINT_NAME
@@ -87,11 +98,17 @@ def input_matrix(samples, config, features=None, backbone_checkpoint=None, devic
     store = FeatureStore(path)
     if store.identity != config.get("feature_identity", store.identity):
         raise ValueError("Feature-cache backbone/configuration does not match this head.")
-    return store.matrix(samples)
+    return head_matrix(samples, store.matrix(samples), config)
 
 
 def normalize_matrix(matrix, config):
-    return (matrix - config["input_mean"].to(matrix.device)) / config["input_std"].to(matrix.device)
+    mean = config["input_mean"].to(matrix.device)
+    std = config["input_std"].to(matrix.device)
+    if config.get("head_type") == "pose":
+        width = config["embedding_dim"]
+        embedding = (matrix[:, :width] - mean) / std
+        return torch.cat((embedding, matrix[:, width:]), dim=1)
+    return (matrix - mean) / std
 
 
 def toy_loader(samples, config, shuffle=False, generator=None, device="auto"):
