@@ -1,0 +1,8 @@
+# Python packages for the project workflows. conda_setup_env.sh first installs
+# the CUDA-matched PyTorch wheels. setup.sbatch builds native extensions.
+-r Reconstruction-Gain-Predictor/requirements.txt
+plyfile
+tqdm
+websockets<14
+matplotlib
+pyqt5

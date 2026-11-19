@@ -4,10 +4,10 @@ Predict the reconstruction gain from adding a camera **before capturing its RGB 
 
 ## TL;DR — quick start
 
-Run these commands from this directory, using an activated environment (`source ../.venv/bin/activate` for the existing workspace). For a fresh Linux setup, create one with `python3 -m venv .venv` and `source .venv/bin/activate`, then:
+Run these commands from this directory in the project's shared `adl4cv-learning` Conda environment. The root setup installs the predictor dependencies together with the reconstruction and baseline dependencies. The two setup steps are [login-node preparation](../conda_setup_env.sh) and the [GPU build](../setup.sbatch).
 
 ```bash
-pip install -r requirements.txt
+conda activate adl4cv-learning
 
 # 1. Assemble training records from existing renderer results and views.
 python preprocess.py --output data/processed/table.jsonl

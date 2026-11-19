@@ -42,7 +42,6 @@ nvidia-smi
 ninja --version
 nvcc --version
 "$CXX" --version
-cd FastGS
 
 python -u - <<'PY'
 import torch
@@ -55,23 +54,29 @@ PY
 
 # Dependencies are already installed on the login node. Do not download or
 # resolve packages in this job, or let pip replace the pinned PyTorch build.
-for extension in diff-gaussian-rasterization_fastgs simple-knn fused-ssim; do
+# Both projects import simple_knn._C.distCUDA2. Install it once from FastGS.
+for extension in FastGS/submodules/diff-gaussian-rasterization_fastgs \
+                 FastGS/submodules/simple-knn FastGS/submodules/fused-ssim \
+                 FisherRF/submodules/diff-gaussian-rasterization FisherRF/diff; do
   echo "Building $extension..."
   python -m pip install --no-build-isolation --no-deps --no-index --no-cache-dir \
-    "./submodules/$extension"
+    "./$extension"
 done
 
 python -u - <<'PY'
 import torch
 from diff_gaussian_rasterization_fastgs import _C as rasterizer_cuda
+from diff_gaussian_rasterization import _C as fisher_standard
+from modified_diff_gaussian_rasterization import _C as fisher_modified
 from simple_knn._C import distCUDA2
 from fused_ssim import fused_ssim
 
 # Exercise a CUDA kernel in each extension, not just its Python import.
 points = torch.rand(1024, 3, device='cuda')
 matrix = torch.eye(4, device='cuda')
-visible = rasterizer_cuda.mark_visible(points, matrix, matrix)
-assert visible.shape == (1024,)
+for rasterizer in (rasterizer_cuda, fisher_standard, fisher_modified):
+    visible = rasterizer.mark_visible(points, matrix, matrix)
+    assert visible.shape == (1024,)
 assert torch.isfinite(distCUDA2(points)).all().item()
 image = torch.rand(1, 3, 32, 32, device='cuda', requires_grad=True)
 score = fused_ssim(image, image.detach())
@@ -79,12 +84,12 @@ score.backward()
 assert abs(score.item() - 1.0) < 1e-4, score.item()
 assert torch.isfinite(image.grad).all().item()
 torch.cuda.synchronize()
-print('All three FastGS extensions passed CUDA smoke checks.')
+print('All five project extensions passed CUDA smoke checks.')
 PY
 
-python train.py --help
-python render.py --help
-python metrics.py --help
+(cd FastGS && python train.py --help && python render.py --help && python metrics.py --help)
+(cd FisherRF && python -c 'from gaussian_renderer import modified_render; from active import HRegSelector')
+python Reconstruction-Gain-Predictor/train.py --help
 
 BLENDER_EXE="${BLENDER_EXE:-$HOME/software/blender-4.5.16-linux-x64/blender}"
 "$BLENDER_EXE" --background --factory-startup --python-exit-code 1 \

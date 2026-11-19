@@ -2,3 +2,7 @@
 	path = FastGS
 	url = https://github.com/visar77/FastGS.git
 	branch = main
+[submodule "FisherRF"]
+	path = FisherRF
+	url = https://github.com/JiangWenPL/FisherRF.git
+	branch = main

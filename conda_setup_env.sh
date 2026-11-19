@@ -33,6 +33,10 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 git submodule update --init --recursive
 test -f FastGS/submodules/diff-gaussian-rasterization_fastgs/third_party/glm/glm/glm.hpp
+for extension in FisherRF/submodules/diff-gaussian-rasterization FisherRF/diff; do
+  test -f "$extension/setup.py"
+  test -f "$extension/third_party/glm/glm/glm.hpp"
+done
 for extension in diff-gaussian-rasterization_fastgs simple-knn fused-ssim; do
   test -f "FastGS/submodules/$extension/setup.py"
 done
@@ -41,9 +45,7 @@ python -m pip install \
   torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
   --index-url https://download.pytorch.org/whl/cu128
 
-# FastGS's optional viewer uses the pre-14 websockets handler API.
-python -m pip install \
-  numpy plyfile tqdm 'websockets<14' matplotlib pyqt5 tensorboard pillow
+python -m pip install -r requirements.txt
 python -m pip check
 
 echo "Checking Python packages and CUDA compiler (no GPU required)..."
