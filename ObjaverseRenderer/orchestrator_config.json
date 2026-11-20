@@ -1,4 +1,5 @@
 {
+  "run_root": "/scratch/vc15/${USER}/fastgs-20-objects",
   "objects_root": "objects",
   "views_root": "views",
   "experiments_dir": "experiments",

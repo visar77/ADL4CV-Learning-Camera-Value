@@ -53,12 +53,19 @@ assert torch.ones(1, device='cuda').item() == 1
 print('GPU preflight passed:', torch.cuda.get_device_name(0))
 PY
 
-# Dependencies are already installed on the login node. Do not download or
-# resolve packages in this job, or let pip replace the pinned PyTorch build.
-for extension in diff-gaussian-rasterization_fastgs simple-knn fused-ssim; do
+# pip builds local packages in place. Use disposable source copies on scratch
+# so setuptools cannot rewrite metadata or leave build products in FastGS.
+build_dir="$(mktemp -d)"
+trap 'rm -rf -- "$build_dir"' EXIT
+extensions=(diff-gaussian-rasterization_fastgs simple-knn fused-ssim)
+tar -C submodules --exclude=build --exclude='*.egg-info' --exclude=__pycache__ \
+  -cf - "${extensions[@]}" | tar -C "$build_dir" -xf -
+
+# The login-node environment already supplies all dependencies.
+for extension in "${extensions[@]}"; do
   echo "Building $extension..."
   python -m pip install --no-build-isolation --no-deps --no-index --no-cache-dir \
-    "./submodules/$extension"
+    "$build_dir/$extension"
 done
 
 python -u - <<'PY'

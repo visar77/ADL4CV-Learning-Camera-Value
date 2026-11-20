@@ -13,9 +13,11 @@
 # CUDA conda hooks read optional variables, so do not use set -u.
 set -eo pipefail
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repository root}"
+if (( $# )); then
+  echo "Set the run paths in ObjaverseRenderer/orchestrator_config.json." >&2
+  exit 2
+fi
 scratch_root="${FASTGS_SCRATCH_ROOT:-/scratch/vc15/${USER:?}}"
-RUN_ROOT="${1:-$scratch_root/fastgs-20-objects}"
-RUN_ROOT="$(cd "$RUN_ROOT" && pwd)"
 
 source "$HOME/miniforge3/etc/profile.d/conda.sh"
 conda activate adl4cv-learning
@@ -30,27 +32,16 @@ export CUDA_CACHE_PATH="$scratch_root/.cache/nv/ComputeCache"
 mkdir -p "$TMPDIR" "$CUDA_CACHE_PATH"
 
 # Catch accidental configuration changes between preparation and execution.
-python - "$RUN_ROOT" <<'PY'
-import json
+python - <<'PY'
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path('ObjaverseRenderer').resolve()))
 import orchestrator
 
-root = Path(sys.argv[1])
-manifest = json.loads((root / 'run_manifest.json').read_text())
-for filename, expected in manifest['configs'].items():
-    if json.loads(Path(filename).read_text()) != expected:
-        raise SystemExit(f'Configuration changed since preparation: {filename}')
-for name in ('objects', 'views', 'reconstructions', 'results'):
-    if orchestrator.CONFIG[f'{name}_root'] != root / name:
-        raise SystemExit(f'Orchestrator {name}_root does not point into {root}')
-if orchestrator.discover_objects() != manifest['objects']:
-    raise SystemExit('Object selection changed since preparation.')
-if [item['id'] for item in orchestrator.load_experiments()] != manifest['experiments']:
-    raise SystemExit('Experiment selection changed since preparation.')
-print('Run:', root)
+manifest = orchestrator.check_prepared_run()
+print('Run:', orchestrator.CONFIG['run_root'])
+print('Results:', orchestrator.CONFIG['results_root'])
 print('Selected objects:', len(manifest['objects']))
 print('Selected experiments:', len(manifest['experiments']))
 PY
@@ -60,4 +51,4 @@ python -u ObjaverseRenderer/orchestrator.py \
   --use-candidate-base \
   --skip-failed-object
 
-echo "Batch sweep finished. Individual outcomes are in $RUN_ROOT/results."
+echo "Batch sweep finished."

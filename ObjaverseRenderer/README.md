@@ -290,8 +290,13 @@ fresh-training view-selection fidelity.
 ## Orchestration and evaluation
 
 `orchestrator.py` reads its data/output paths from
-[orchestrator_config.json](orchestrator_config.json). Paths are relative to
-`ObjaverseRenderer/`. It discovers all GLBs and experiments when their IDs are
+[orchestrator_config.json](orchestrator_config.json). The configured `run_root`
+contains the run manifest. The four data directories are relative to
+`run_root` unless given as absolute paths. Relative `run_root`,
+`experiments_dir`, and `base_cloud_ply` paths resolve from `ObjaverseRenderer/`.
+The bundled run root uses VC15 scratch and expands `${USER}`; set it to `"."`
+to use the renderer's local data directories. The orchestrator discovers all
+GLBs and experiments when their IDs are
 omitted, rendering missing corpora automatically and running every experiment
 for one object before moving to the next.
 

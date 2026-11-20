@@ -3,6 +3,7 @@
 import argparse
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import random
 import shutil
@@ -21,10 +22,15 @@ from training_fastgs import CONFIG as TRAINING_CONFIG
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "orchestrator_config.json"
+RUN_FOLDERS = ("objects", "views", "reconstructions", "results")
 TRAINER = ROOT / "training_fastgs.py"
 RENDERER = ROOT / "renderer.py"
 EVALUATOR = ROOT / "evaluate_metrics.py"
 PYTHON = TRAINING_CONFIG["python"]
+
+
+def resolve_config_path(path, relative_to=ROOT):
+    return (relative_to / Path(os.path.expandvars(path)).expanduser()).resolve()
 
 
 def load_config():
@@ -32,21 +38,29 @@ def load_config():
         config = json.load(file)
     if not isinstance(config, dict):
         raise ValueError(f"Orchestrator config must be a JSON object: {CONFIG_PATH}")
-
-    for key in (
-        "objects_root",
-        "views_root",
-        "experiments_dir",
-        "reconstructions_root",
-        "results_root",
-    ):
-        config[key] = (ROOT / config[key]).resolve()
+    config["run_root"] = resolve_config_path(config.get("run_root", "."))
+    for folder in RUN_FOLDERS:
+        key = f"{folder}_root"
+        config[key] = resolve_config_path(config[key], config["run_root"])
+    config["experiments_dir"] = resolve_config_path(config["experiments_dir"])
     if config.get("base_cloud_ply") is not None:
-        config["base_cloud_ply"] = (ROOT / config["base_cloud_ply"]).resolve()
+        config["base_cloud_ply"] = resolve_config_path(config["base_cloud_ply"])
     return config
 
 
 CONFIG = load_config()
+
+
+def config_snapshot():
+    # The resolved data paths include run_root. Store them in the format used
+    # by existing run manifests, so the VC18 run can be moved without redoing it.
+    snapshot = {key: value for key, value in CONFIG.items() if key != "run_root"}
+    for key, value in snapshot.items():
+        if isinstance(value, Path):
+            if key in ("experiments_dir", "base_cloud_ply") and value.is_relative_to(ROOT):
+                value = value.relative_to(ROOT)
+            snapshot[key] = str(value)
+    return snapshot
 
 
 def build_parser():
@@ -131,6 +145,20 @@ def discover_objects(requested_id=None):
 def load_json(path):
     with path.open(encoding="utf-8") as file:
         return json.load(file)
+
+
+def check_prepared_run():
+    manifest = load_json(CONFIG["run_root"] / "run_manifest.json")
+    for filename, expected in manifest["configs"].items():
+        path = Path(filename)
+        current = config_snapshot() if path.resolve() == CONFIG_PATH else load_json(path)
+        if current != expected:
+            raise SystemExit(f"Configuration changed since preparation: {filename}")
+    if discover_objects() != manifest["objects"]:
+        raise SystemExit("Object selection changed since preparation.")
+    if [item["id"] for item in load_experiments()] != manifest["experiments"]:
+        raise SystemExit("Experiment selection changed since preparation.")
+    return manifest
 
 
 def save_json(path, value):
