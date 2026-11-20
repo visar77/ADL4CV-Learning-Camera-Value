@@ -6,8 +6,10 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# /tmp is a RAM disk on this cluster. Use scratch for installation temporaries.
-export TMPDIR="${SCRATCH:-$HOME/tmp}/fastgs-setup-tmp"
+# /tmp is a RAM disk on this cluster. Use the shared SSD for setup and weights.
+scratch_root="${FASTGS_SCRATCH_ROOT:-/scratch/vc15/${USER:?}}"
+export TMPDIR="$scratch_root/fastgs-setup-tmp"
+export TORCH_HOME="${TORCH_HOME:-$scratch_root/.cache/torch}"
 mkdir -p "$TMPDIR"
 
 source "$HOME/miniforge3/etc/profile.d/conda.sh"

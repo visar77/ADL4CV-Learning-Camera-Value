@@ -8,6 +8,7 @@ import random
 import shutil
 import subprocess
 import sys
+import traceback
 
 from sampling import (
     candidate_configurations,
@@ -69,15 +70,21 @@ def build_parser():
         help="Skip automatic evaluation after reconstructions.",
     )
     parser.add_argument("--redo", action="store_true", help="Redo metric evaluation.")
-    parser.add_argument(
+    on_error = parser.add_mutually_exclusive_group()
+    on_error.add_argument(
         "--continue-on-error",
         action="store_true",
         help="Continue to other reconstructions after all retries for a job fail.",
     )
+    on_error.add_argument(
+        "--skip-failed-object",
+        action="store_true",
+        help="Move to the next object when a reconstruction or evaluation exhausts its retries.",
+    )
     parser.add_argument(
         "--retries",
         type=int,
-        default=3,
+        default=2,
         help="Number of retries after the initial attempt for FastGS/evaluation failures.",
     )
     return parser
@@ -182,6 +189,19 @@ def training_manifests(object_dir, global_train, global_test, indices):
 
 def checkpoint_path(model_dir, iterations):
     return model_dir / "point_cloud" / f"iteration_{iterations}" / "point_cloud.ply"
+
+
+def discard_metrics(result, name):
+    names = {name}
+    if name == "base":
+        names.update(key for key, record in result["reconstructions"].items()
+                     if record.get("status") == "redundant")
+    for field in ("metrics", "metrics_iterations", "metrics_provenance"):
+        entries = result.get(field, {})
+        for key in names:
+            entries.pop(key, None)
+    if not result.get("metrics"):
+        result.pop("metrics_iteration", None)
 
 
 def safely_remove_output(path):
@@ -369,7 +389,15 @@ def run_experiment(object_id, object_dir, experiment_id, base_indices, candidate
             and previous.get("experiment_id") == experiment_id
         ):
             result["reconstructions"].update(previous.get("reconstructions", {}))
+            for field in ("metrics", "metrics_iteration", "metrics_iterations", "metrics_provenance"):
+                if field in previous:
+                    result[field] = previous[field]
+            if {"averages", "per_view"} <= result.get("metrics", {}).keys():
+                result["metrics"] = {"base": result["metrics"]}
     if run_base:
+        retrain_base = args.retrain and args.candidate_id is None
+        if retrain_base or not base_ply.is_file():
+            discard_metrics(result, "base")
         base_record = {
             "status": "running",
             "iterations": base_iterations,
@@ -386,7 +414,7 @@ def run_experiment(object_id, object_dir, experiment_id, base_indices, candidate
                     base_indices,
                     base_iterations,
                     None,
-                    args.retrain if args.candidate_id is None else False,
+                    retrain_base,
                 ),
                 args.retries,
                 "base reconstruction",
@@ -402,6 +430,8 @@ def run_experiment(object_id, object_dir, experiment_id, base_indices, candidate
                     ),
                 )
                 save_json(result_path, result)
+                if args.skip_failed_object:
+                    raise
                 print(
                     f"Skipping experiment {object_id}/{experiment_id}: "
                     f"candidate base reconstruction failed: {error}"
@@ -491,6 +521,8 @@ def run_experiment(object_id, object_dir, experiment_id, base_indices, candidate
         model_dir = base_dir / candidate_id
         if model_dir == base_model_dir:
             raise ValueError(f"Candidate ID conflicts with reserved path: {candidate_id}")
+        if args.retrain or not checkpoint_path(model_dir, candidate_iterations).is_file():
+            discard_metrics(result, candidate_id)
         record = {
             "status": "running",
             "iterations": candidate_iterations,
@@ -608,11 +640,33 @@ def main(argv=None):
     selected_ids = [args.experiment_id] if args.experiment_id is not None else experiment_ids
 
     for object_id in object_ids:
-        object_dir, global_train = ensure_views(object_id, args.rerender)
-        plans = plan_candidates(object_id, object_dir, global_train, experiments)
+        try:
+            object_dir, global_train = ensure_views(object_id, args.rerender)
+            plans = plan_candidates(object_id, object_dir, global_train, experiments)
+        except Exception:
+            if not (args.continue_on_error or args.skip_failed_object):
+                raise
+            print(f"Skipping object {object_id}: failed to prepare views or cameras", file=sys.stderr)
+            traceback.print_exc()
+            continue
         for experiment_id in selected_ids:
             base, candidates = plans[experiment_id]
-            run_experiment(object_id, object_dir, experiment_id, base, candidates, args)
+            print(f"Running {object_id} / {experiment_id}", flush=True)
+            try:
+                run_experiment(object_id, object_dir, experiment_id, base, candidates, args)
+            except Exception:
+                if not (args.continue_on_error or args.skip_failed_object):
+                    raise
+                if args.skip_failed_object:
+                    print(
+                        f"Skipping remaining work for {object_id} after failure in {experiment_id}",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(f"Skipping failed context {object_id} / {experiment_id}", file=sys.stderr)
+                traceback.print_exc()
+                if args.skip_failed_object:
+                    break
 
 if __name__ == "__main__":
     main()

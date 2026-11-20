@@ -292,7 +292,8 @@ fresh-training view-selection fidelity.
 `orchestrator.py` reads its data/output paths from
 [orchestrator_config.json](orchestrator_config.json). Paths are relative to
 `ObjaverseRenderer/`. It discovers all GLBs and experiments when their IDs are
-omitted, rendering missing corpora automatically.
+omitted, rendering missing corpora automatically and running every experiment
+for one object before moving to the next.
 
 ```bash
 python orchestrator.py \
@@ -303,18 +304,20 @@ python orchestrator.py \
 
 The supported switches include `--retrain`, `--rerender`,
 `--use-candidate-base [base-3k]`, `--do-not-evaluate`, `--redo`,
-`--continue-on-error`, and `--retries` (default: 3 retries after the initial
-attempt). Every completed reconstruction is evaluated automatically;
+`--continue-on-error`, `--skip-failed-object`, and `--retries` (default: 2
+retries after the initial attempt). Every completed reconstruction is evaluated automatically;
 `--do-not-evaluate` disables that behavior. `--redo` forces recomputation of
-metrics. Existing reconstructions are reused unless `--retrain` is specified;
+metrics. On resume, evaluations are reused when the checkpoint, data, and
+evaluator fingerprints match. Existing reconstructions are reused unless
+`--retrain` is specified;
 missing or incomplete reconstructions are trained. `--rerender` forces corpus
 generation. FastGS training and metric evaluation are retried up to the
 configured count.
 After retries are exhausted, the job is recorded as failed in its
-`results.json`; without `--continue-on-error` the orchestrator then exits, and
-with it the orchestrator proceeds to other reconstructions. A later run retries
-failed reconstructions and evaluations, with per-job `status` and
-`evaluation_status` showing their outcomes.
+`results.json`. Use `--continue-on-error` to proceed to other reconstructions
+or `--skip-failed-object` to skip the object's remaining work and proceed to
+the next object. A later run retries failed reconstructions and evaluations,
+with per-job `status` and `evaluation_status` showing their outcomes.
 Candidate-base mode trains/reuses the regular `base/` reconstruction, then
 adapts candidates for 3k steps from its PLY. If `base/` is missing, it is trained
 first; a candidate-only run does not retrain an existing base. If the required
