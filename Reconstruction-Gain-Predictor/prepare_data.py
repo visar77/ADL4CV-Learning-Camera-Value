@@ -1,12 +1,11 @@
-"""Create a self-contained PSNR training dataset from renderer outputs."""
+"""Build labelled manifests from renderer scores and camera/image metadata."""
 
 from __future__ import annotations
 
-import argparse
-import json
 from pathlib import Path
+import argparse
 
-from dataset import preprocess_samples, relativize_manifest, upgrade_manifest
+from gain_predictor.data.manifest import build_manifest, relativize_manifest, upgrade_manifest
 
 
 def main(argv=None) -> None:
@@ -44,12 +43,12 @@ def main(argv=None) -> None:
             missing = sum(not s.context_intrinsics or s.candidate_intrinsics is None for s in samples)
             if missing:
                 print(f"{missing} records still lack intrinsics. Paths-only migration does not add calibration. "
-                      f"Run: python preprocess.py --upgrade {target}")
+                      f"Run: python prepare_data.py --upgrade {target}")
         return
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be positive")
     try:
-        samples = preprocess_samples(
+        samples = build_manifest(
             args.results_root,
             args.views_root or Path("data/views"),
             args.output,
@@ -59,11 +58,7 @@ def main(argv=None) -> None:
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     print(f"Saved {len(samples)} samples to {args.output}")
-    audit_path = args.output.with_suffix(".audit.json")
-    skipped = json.loads(audit_path.read_text()).get("skipped_candidates", [])
-    if skipped:
-        print(f"Skipped {len(skipped)} candidates without a distinct camera index; see the audit.")
-    print(f"Audit: {audit_path}")
+    print(f"Audit: {args.output.with_suffix('.audit.json')}")
 
 
 if __name__ == "__main__":

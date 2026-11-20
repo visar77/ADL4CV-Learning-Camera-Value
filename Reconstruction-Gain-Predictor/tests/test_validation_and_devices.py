@@ -1,24 +1,46 @@
+from pathlib import Path
+from unittest.mock import patch
 import contextlib
 import io
 import json
 import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
-import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
+import torch
 
-from devices import compute_precision, resolve_device
-from experiments import make_splits
-from features import atomic_save, extract_features
-from train import RollingValidation, parse_args, train
-from runtime import load_run, predict_normalized, score_samples
-from test_research_pipeline import TinyBackbone, example
+from gain_predictor.artifacts import atomic_save
+from gain_predictor.checkpoints import load_run
+from gain_predictor.data.splits import make_splits
+from gain_predictor.devices import compute_precision, resolve_device
+from gain_predictor.feature_cache import extract_features
+from gain_predictor.scoring import predict_normalized, score_samples
+from gain_predictor.training import RollingValidation, train
+from tests.test_research_pipeline import TinyBackbone, example
+from train import parse_args
 
 
 class RollingValidationTests(unittest.TestCase):
+    def test_cnn_training_and_validation_use_requested_db_target(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            # Each record gains 2 dB, or 0.1 in relative units. The normalized
+            # target is zero in dB. A relative target here gives a huge loss.
+            samples = [example(root, context, gain=0.1) for context in range(4)]
+            manifest = root / "labels.jsonl"
+            manifest.write_text("".join(json.dumps(s.to_json()) + "\n" for s in samples))
+            args = parse_args([
+                "--dataset", str(manifest), "--model", "toy", "--target", "delta-db",
+                "--epochs", "1", "--device", "cpu", "--image-size", "8",
+                "--output", str(root / "model.pt"), "--log-dir", str(root / "logs"),
+            ])
+            train(args)
+            report = json.loads(args.output.with_suffix(".report.json").read_text())
+            first_epoch = report["history"][0]
+            self.assertLess(first_epoch["train_loss"], 1.0)
+            self.assertLess(first_epoch["validation"]["loss"], 1.0)
+
     def test_weighted_window_budget_and_complete_cycle(self):
         values = torch.arange(5, dtype=torch.float32)[:, None]
         loader = DataLoader(TensorDataset(values, torch.zeros_like(values)), batch_size=2)
@@ -65,7 +87,7 @@ class RollingValidationTests(unittest.TestCase):
                                '--scheduler','none','--early-stopping-patience','0','--device','cpu',
                                '--output',str(root/'model.pt'),'--log-dir',str(root/'logs')])
             self.assertEqual((args.validation_fraction,args.test_fraction),(.1,.1))
-            with patch('train.predict_normalized', wraps=predict_normalized) as full_evaluation:
+            with patch('gain_predictor.training.predict_normalized', wraps=predict_normalized) as full_evaluation:
                 train(args)
                 self.assertEqual(full_evaluation.call_count, 3)  # train/validation/test, once each at end
             report = json.loads(args.output.with_suffix('.report.json').read_text())
@@ -110,7 +132,7 @@ class DeviceTests(unittest.TestCase):
             self.assertEqual(loaded['nested'][0]['b'].device.type,'cpu')
 
     def test_complete_cli_cache_needs_no_backbone_weights(self):
-        import features
+        import cache_features
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
             root = Path(d)
             samples = [example(root,0,q,.1*q) for q in range(3)]
@@ -118,15 +140,15 @@ class DeviceTests(unittest.TestCase):
             manifest.write_text(''.join(json.dumps(s.to_json())+'\n' for s in samples))
             weights = root/'weights.pt'
             weights.write_bytes(b'checkpoint identity only')
-            from features import file_sha256
+            from gain_predictor.artifacts import file_sha256
             cache = extract_features(samples, root/'cache', TinyBackbone,
                                      {'name':'tiny','checkpoint_sha256':file_sha256(weights),'latent_tokens':4},
                                      image_size=8, device='cpu', backbone_checkpoint=weights)
             weights.unlink()
             def forbidden(*args):
                 raise AssertionError('A complete CLI cache must not initialize/download a backbone')
-            with patch.dict(features.BACKBONES, {'tiny':forbidden}):
-                features.main(['--dataset',str(manifest),'--output',str(root/'cache'),'--backbone','tiny',
+            with patch.dict(cache_features.BACKBONES, {'tiny':forbidden}):
+                cache_features.main(['--dataset',str(manifest),'--output',str(root/'cache'),'--backbone','tiny',
                                '--lvsm-checkpoint',str(weights),'--image-size','8','--lvsm-latent-tokens','4',
                                '--device','cpu'])
             self.assertFalse(weights.exists())

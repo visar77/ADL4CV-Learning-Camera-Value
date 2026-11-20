@@ -1,16 +1,18 @@
-"""Score one candidate or rank an experiment's candidates using a saved head."""
+"""Predict candidate gains from new inputs or rank records using a trained model."""
 from __future__ import annotations
 
+from pathlib import Path
 import argparse
 import json
-from pathlib import Path
 
-from dataset import load_manifest, sample_key
-from experiments import select_samples
-from runtime import load_run, score_samples
-from devices import resolve_device
-from paths import resolve_reference
-from predictor import GainEstimator, candidate_utility
+from gain_predictor.artifacts import resolve_reference
+from gain_predictor.checkpoints import load_run
+from gain_predictor.data.manifest import load_manifest
+from gain_predictor.data.records import sample_key
+from gain_predictor.data.splits import select_samples
+from gain_predictor.devices import resolve_device
+from gain_predictor.inference import GainEstimator, candidate_utility
+from gain_predictor.scoring import score_samples
 
 
 def report_predictions(rows, gains, rank):
@@ -98,7 +100,7 @@ def main(argv=None):
     if not samples:
         raise ValueError("No candidate samples selected.")
     if args.rank:
-        from dataset import context_key
+        from gain_predictor.data.records import context_key
         if len({context_key(s) for s in samples}) != 1:
             raise ValueError("--rank requires one physical context; select --scene-id and --experiment-id.")
     values = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint).flatten()

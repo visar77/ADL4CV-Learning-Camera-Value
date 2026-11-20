@@ -1,8 +1,8 @@
 """Calibrated OpenCV cameras and context-only scene normalization."""
 from __future__ import annotations
 
-import torch
 from torch import Tensor
+import torch
 
 CAMERA_VERSION = "opencv-pixel-centers-context-frame-v1"
 COVERAGE_DIM = 4

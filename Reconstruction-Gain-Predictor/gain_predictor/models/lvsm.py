@@ -1,19 +1,17 @@
-"""Model components for reconstruction-gain prediction."""
-
+"""Frozen LVSM encoder/decoder and official checkpoint loading."""
 from __future__ import annotations
 
-import urllib.request
-from abc import ABC, abstractmethod
-
-from geometry import (COVERAGE_DIM, RELATIVE_POSE_DIM, apply_frame, camera_coverage,
-                      context_frame, rays, relative_camera_poses)
 from pathlib import Path
+import urllib.request
 
-import torch
 from torch import Tensor, nn
-from torch.nn.functional import interpolate
+import torch
 
-DEFAULT_IMAGE_SIZE = 512
+from .backbone import FeatureBackbone
+from gain_predictor.data.batches import DEFAULT_IMAGE_SIZE, prepare_images
+from gain_predictor.geometry import apply_frame, context_frame, rays
+
+
 LVSM_PATCH_SIZE = 8
 LVSM_CHECKPOINT_NAME = "lvsm_scene_encoder_decoder_res512.pt"
 LVSM_CHECKPOINT_URL = (
@@ -22,85 +20,8 @@ LVSM_CHECKPOINT_URL = (
 )
 
 
-def prepare_images(images: Tensor, image_size: int) -> Tensor:
-    """Convert RGB tensors from uint8/0..255 into normalized model input."""
-    if images.dtype == torch.uint8:
-        images = images.float() / 255.0
-    elif images.is_floating_point():
-        images = images.float()  # Floating input contract: [0, 1].
-    else:
-        raise TypeError("Images must be uint8 [0,255] or floating point [0,1].")
-    batch, views, channels, height, width = images.shape
-    if (height, width) != (image_size, image_size):
-        images = interpolate(
-            images.reshape(batch * views, channels, height, width),
-            size=(image_size, image_size), mode="bilinear", align_corners=False,
-        ).reshape(batch, views, channels, image_size, image_size)
-    return images
-
-
 def _normalize_lvsm_rgb(images: Tensor) -> Tensor:
     return images.float() * 2.0 - 1.0
-
-
-class ContextPoseCNN(nn.Module):
-    """CPU toy encoder with an LVSM-shaped context/query boundary.
-
-    The public forward contract is context images and poses plus one candidate
-    pose. No candidate image is accepted, preventing inference-time leakage.
-    """
-
-    def __init__(
-        self, pose_dim: int = 16, context_dim: int = 64, image_size: int = 32, dropout: float = 0.0
-    ) -> None:
-        super().__init__()
-        self.image_size = image_size
-        self.image_encoder = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2),
-            nn.GELU(),
-            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
-            nn.GELU(),
-            nn.Conv2d(32, context_dim, kernel_size=3, stride=2, padding=1),
-            nn.GELU(),
-            nn.AdaptiveAvgPool2d(1),
-        )
-        self.context_pose = nn.Sequential(nn.Linear(pose_dim, context_dim), nn.GELU())
-        self.candidate_pose = nn.Sequential(nn.Linear(pose_dim, context_dim), nn.GELU())
-        self.regression_head = nn.Sequential(
-            nn.Linear(context_dim * 3, 64),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
-        )
-
-    def forward(
-        self,
-        images: Tensor,
-        context_poses: Tensor,
-        candidate_pose: Tensor,
-        mask: Tensor,
-        **unused,
-    ) -> Tensor:
-        if images.ndim != 5 or context_poses.ndim != 3 or mask.ndim != 2:
-            raise ValueError(
-                "Expected images [B,N,3,H,W], poses [B,N,P], and mask [B,N]"
-            )
-        if (
-            images.shape[:2] != context_poses.shape[:2]
-            or images.shape[:2] != mask.shape
-        ):
-            raise ValueError("Context image, pose, and mask dimensions must agree")
-        images = prepare_images(images, self.image_size)
-        batch, views, channels, height, width = images.shape
-        tokens = self.image_encoder(
-            images.reshape(batch * views, channels, height, width)
-        )
-        tokens = tokens.flatten(1).reshape(batch, views, -1)
-        tokens = tokens + self.context_pose(context_poses)
-        weights = mask.unsqueeze(-1).to(tokens.dtype)
-        pooled = (tokens * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1)
-        query = self.candidate_pose(candidate_pose)
-        return self.regression_head(torch.cat((pooled, query, pooled * query), dim=-1))
 
 
 class _RMSNorm(nn.Module):
@@ -257,23 +178,6 @@ class _LVSMSceneEncoder(nn.Module):
                                       candidate_intrinsics[:, None], *images.shape[-2:])[:, 0]
 
 
-class FeatureBackbone(nn.Module, ABC):
-    """Replaceable frozen extractor. Cameras use OpenCV c2w convention.
-
-    Context state is opaque to callers. Candidate poses are [B,Q,16] and
-    normalized intrinsics are [B,Q,4]; decoded features are [B,Q,D].
-    """
-    feature_dim: int
-
-    @abstractmethod
-    def encode_context(self, images, context_poses, mask, context_intrinsics):
-        raise NotImplementedError
-
-    @abstractmethod
-    def decode_candidates(self, context, candidate_poses, candidate_intrinsics):
-        raise NotImplementedError
-
-
 class LVSMFeatureBackbone(FeatureBackbone):
     feature_dim = 768
 
@@ -294,7 +198,7 @@ class LVSMFeatureBackbone(FeatureBackbone):
 
     def encode_context(self, images, context_poses, mask, context_intrinsics):
         if context_intrinsics is None:
-            raise ValueError("Missing intrinsics. Regenerate the manifest with preprocess.py.")
+            raise ValueError("Missing intrinsics. Regenerate the manifest with prepare_data.py.")
         with torch.no_grad():
             return self.encoder.encode_context(prepare_images(images, self.image_size),
                                                context_poses, mask, context_intrinsics)
@@ -303,99 +207,3 @@ class LVSMFeatureBackbone(FeatureBackbone):
         with torch.no_grad():
             return self.encoder.decode_candidates(context, candidate_poses, candidate_intrinsics,
                                                    self.image_size, self.image_size)
-
-
-BACKBONES = {"lvsm": LVSMFeatureBackbone}
-
-
-def register_backbone(name: str, factory):
-    """Register a FeatureBackbone factory without changing the feature trainer."""
-    if name in BACKBONES:
-        raise ValueError(f"Backbone already registered: {name}")
-    BACKBONES[name] = factory
-
-
-class FeatureGainHead(nn.Sequential):
-    def __init__(self, feature_dim: int, dropout: float = 0.0,
-                 hidden_dim: int = 64, hidden_layers: int = 1):
-        if hidden_dim < 1 or hidden_layers < 1:
-            raise ValueError("Gain-head width and hidden-layer count must be positive.")
-        layers = []
-        input_dim = feature_dim
-        for _ in range(hidden_layers):
-            layers.extend((nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout)))
-            input_dim = hidden_dim
-        layers.append(nn.Linear(input_dim, 1))
-        super().__init__(*layers)
-
-
-class CoverageGainHead(nn.Module):
-    """Linear camera-coverage estimate plus a candidate-conditioned correction."""
-
-    def __init__(self, input_dim: int, dropout: float = 0.0,
-                 hidden_dim: int = 32, hidden_layers: int = 1):
-        super().__init__()
-        self.coverage_gain = nn.Linear(COVERAGE_DIM, 1, bias=False)
-        self.correction = FeatureGainHead(input_dim, dropout, hidden_dim, hidden_layers)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        coverage = inputs[..., -COVERAGE_DIM:]
-        return self.coverage_gain(coverage) + self.correction(inputs)
-
-
-class PoseGainHead(nn.Module):
-    """Encode each full context-to-candidate pose before pooling across views."""
-
-    def __init__(self, embedding_dim: int, dropout: float = 0.0,
-                 hidden_dim: int = 32, hidden_layers: int = 1):
-        super().__init__()
-        self.embedding_dim = embedding_dim
-        relation_width = 16
-        self.pose_encoder = nn.Sequential(nn.Linear(RELATIVE_POSE_DIM, relation_width), nn.GELU())
-        summary_dim = 2 * relation_width + 1
-        self.pose_gain = nn.Linear(summary_dim, 1, bias=False)
-        self.correction = FeatureGainHead(embedding_dim + summary_dim, dropout, hidden_dim, hidden_layers)
-
-    def forward(self, inputs: Tensor) -> Tensor:
-        embedding = inputs[:, :self.embedding_dim]
-        views = inputs[:, self.embedding_dim:].reshape(len(inputs), -1, RELATIVE_POSE_DIM + 1)
-        valid = views[..., -1:].bool()
-        tokens = self.pose_encoder(views[..., :-1])
-        count = valid.sum(1).to(tokens.dtype)
-        mean = tokens.masked_fill(~valid, 0).sum(1) / count
-        maximum = tokens.masked_fill(~valid, -torch.inf).amax(1)
-        summary = torch.cat((mean, maximum, count.log()), dim=-1)
-        return self.pose_gain(summary) + self.correction(torch.cat((embedding, summary), dim=-1))
-
-
-FEATURE_HEADS = {"mlp": FeatureGainHead, "coverage": CoverageGainHead, "pose": PoseGainHead}
-DEFAULT_HEAD_WIDTH = {"mlp": 64, "coverage": 32, "pose": 32}
-
-
-def feature_head_inputs(head_type, embeddings, poses, candidate, mask):
-    if head_type == "pose":
-        relations = relative_camera_poses(poses, candidate, mask)
-        return torch.cat((embeddings, relations.flatten(1)), dim=-1)
-    if head_type == "coverage":
-        coverage = camera_coverage(poses, candidate, mask)
-        return torch.cat((embeddings, coverage), dim=-1)
-    return embeddings
-
-
-class LVSMGainPredictor(nn.Module):
-    """Online wrapper; training uses the same head on cached features."""
-    def __init__(self, checkpoint: Path, feature_dim=768, image_size=DEFAULT_IMAGE_SIZE,
-                 latent_tokens=3072, checkpoint_url=LVSM_CHECKPOINT_URL, dropout=0.0,
-                 head_hidden_dim=None, head_hidden_layers=1, head_type="mlp"):
-        super().__init__()
-        self.backbone = LVSMFeatureBackbone(checkpoint, image_size, latent_tokens, checkpoint_url)
-        self.head_type = head_type
-        input_dim = self.backbone.feature_dim + (COVERAGE_DIM if head_type == "coverage" else 0)
-        width = DEFAULT_HEAD_WIDTH[head_type] if head_hidden_dim is None else head_hidden_dim
-        self.regression_head = FEATURE_HEADS[head_type](input_dim, dropout, width, head_hidden_layers)
-
-    def forward(self, images, context_poses, candidate_pose, mask,
-                context_intrinsics=None, candidate_intrinsics=None):
-        context = self.backbone.encode_context(images, context_poses, mask, context_intrinsics)
-        encoded = self.backbone.decode_candidates(context, candidate_pose[:, None], candidate_intrinsics[:, None])[:, 0]
-        return self.regression_head(feature_head_inputs(self.head_type, encoded, context_poses, candidate_pose, mask))

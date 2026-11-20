@@ -1,4 +1,5 @@
 __pycache__/
-checkpoints/
-runs/
-data/
+/checkpoints/
+/runs/
+/data/
+/.venv/

@@ -1,114 +1,19 @@
-"""Calibrated manifests, label audits, and variable-view RGB loading."""
+"""Build, read, and migrate JSONL manifests using renderer results and cameras."""
 from __future__ import annotations
 
-import hashlib
+from dataclasses import replace
+from pathlib import Path
 import json
 import math
 import shutil
-from collections import defaultdict
-from dataclasses import dataclass, fields, field, replace
-from functools import lru_cache
-from pathlib import Path
-from typing import Any
 
+from PIL import Image
 import numpy as np
 import torch
-from PIL import Image
-from torch.utils.data import Dataset
 
-from geometry import to_opencv
-from paths import relative_path, resolve_reference
-
-POSE_DIM = 16
-DEFAULT_IMAGE_SIZE = 512
-
-
-@dataclass(frozen=True)
-class GainSample:
-    scene_id: str
-    experiment_id: str
-    candidate_id: str
-    context_image_paths: tuple[str, ...]
-    context_poses: tuple[tuple[float, ...], ...]
-    candidate_pose: tuple[float, ...]
-    psnr_gain: float
-    source_results: str
-    base_psnr: float | None = None
-    candidate_psnr: float | None = None
-    context_intrinsics: tuple[tuple[float, ...], ...] = ()
-    candidate_intrinsics: tuple[float, ...] | None = None
-    camera_convention: str = "blender"
-    label_kind: str = "retrained"
-    label_sources: tuple[str, ...] = ()
-    observed_gains: tuple[float, ...] = ()
-    path_base: str | None = None
-    path_root: Path | None = field(default=None, compare=False, repr=False)
-
-    @property
-    def image_paths(self) -> tuple[Path, ...]:
-        root = self.path_root or Path.cwd()
-        return tuple(resolve_reference(path, root) for path in self.context_image_paths)
-
-    def to_json(self) -> dict[str, Any]:
-        record = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "path_root"}
-        if self.path_base is None:
-            record.pop("path_base")  # Preserve signatures of legacy records.
-        return record
-
-
-def digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
-def sample_key(sample: GainSample) -> str:
-    return f"{sample.scene_id}\x1f{sample.experiment_id}\x1f{sample.candidate_id}"
-
-
-def context_key(sample: GainSample) -> str:
-    """Physical context group, independent of experiment alias and view order."""
-    intrinsics = sample.context_intrinsics or (None,) * len(sample.context_poses)
-    views = sorted(zip(sample.context_image_paths, sample.context_poses, intrinsics))
-    return digest([sample.scene_id, sample.camera_convention, views])
-
-
-def input_key(sample: GainSample) -> str:
-    return digest([context_key(sample), sample.candidate_pose, sample.candidate_intrinsics])
-
-
-def audit_samples(samples: list[GainSample]) -> dict:
-    groups = defaultdict(list)
-    for sample in samples:
-        groups[input_key(sample)].append(sample)
-    duplicates = []
-    for key, group in groups.items():
-        observations = [v for s in group for v in (s.observed_gains or (s.psnr_gain,))]
-        if len(observations) > 1:
-            duplicates.append({"input_key": key, "sample_ids": [sample_key(s) for s in group],
-                               "observations": len(observations),
-                               "gain_range": max(observations) - min(observations),
-                               "gain_std": float(np.std(observations))})
-    return {"records": len(samples), "scenes": len({s.scene_id for s in samples}),
-            "contexts": len({context_key(s) for s in samples}), "unique_inputs": len(groups),
-            "redundancy_records": sum(s.label_kind == "redundancy_control" for s in samples),
-            "negative_gains": sum(s.psnr_gain < 0 for s in samples), "duplicates": duplicates}
-
-
-def deduplicate_samples(samples: list[GainSample]) -> list[GainSample]:
-    """Average repeated observations, retaining their labels and provenance."""
-    groups = defaultdict(list)
-    for sample in samples:
-        groups[input_key(sample)].append(sample)
-    result = []
-    for group in groups.values():
-        observations = tuple(v for s in group for v in (s.observed_gains or (s.psnr_gain,)))
-        sources = tuple(v for s in group for v in (s.label_sources or (sample_key(s),)))
-        candidate_values = [s.candidate_psnr for s in group]
-        candidate = (sum(candidate_values) / len(candidate_values)
-                     if all(v is not None for v in candidate_values) else None)
-        result.append(replace(group[0], psnr_gain=sum(observations) / len(observations),
-                              candidate_psnr=candidate, label_sources=sources,
-                              observed_gains=observations))
-    return result
+from .records import GainSample, audit_samples, deduplicate_samples, require_calibration, sample_key
+from gain_predictor.artifacts import PROJECT_ROOT, relative_path, resolve_reference
+from gain_predictor.geometry import to_opencv
 
 
 def _records(path):
@@ -140,7 +45,6 @@ def _intrinsics(payload, frame, image_path=None, *, image_size=None):
 def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=None,
                    duplicates="mean") -> list[GainSample]:
     samples = []
-    skipped_candidates = []
     approximated_redundancy_candidates = []
     result_files = sorted(results_root.rglob("results.json"))
     if not result_files:
@@ -148,7 +52,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
             f"No results.json files found under {results_root.resolve()}. "
             "This rebuild reads reconstruction results, not an existing JSONL manifest. "
             "To add calibration to an existing dataset without rebuilding its labels, use "
-            "python preprocess.py --upgrade <existing-manifest.jsonl>. "
+            "python prepare_data.py --upgrade <existing-manifest.jsonl>. "
             "Otherwise specify --results-root and --views-root for your existing renderer outputs."
         )
     for results_path in result_files:
@@ -191,52 +95,42 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
             base = float(raw["metrics"]["base"]["averages"]["PSNR"])
             if not math.isfinite(base) or abs(base) < 1e-6:
                 raise ValueError(f"Invalid base PSNR in {results_path}")
-            for candidate_id, candidate in raw.get("reconstructions", {}).items():
+            source = relative_path(results_path, output.parent)
+            for candidate_id, candidate in reconstructions.items():
                 if candidate_id == "base" or candidate.get("status") not in {"complete", "redundant"}:
                     continue
                 metric = raw["metrics"].get(candidate_id, {}).get("averages", {})
                 if "PSNR" not in metric:
                     continue
+                is_redundant = candidate.get("status") == "redundant"
                 index = candidate.get("candidate_lattice_index")
-                if index is None:
-                    candidate_indices = candidate.get("train_lattice_indices")
-                    if candidate_indices is not None:
-                        added_indices = set(map(int, candidate_indices)) - set(map(int, context_indices))
-                        if len(added_indices) == 1:
-                            index = added_indices.pop()
-                        elif not added_indices and candidate.get("status") == "redundant":
-                            index = redundancy_camera_indices[candidate_id]
-                            approximated_redundancy_candidates.append({
-                                "source_results": relative_path(results_path, output.parent),
-                                "candidate_id": str(candidate_id),
-                                "candidate_lattice_index": int(index),
-                                "reason": "candidate index missing; assigned a context camera as its redundant pose",
-                            })
-                        else:
-                            raise ValueError(
-                                f"Expected one added camera for {candidate_id} in {results_path}; "
-                                f"found {len(added_indices)}."
-                            )
-                    elif candidate.get("status") == "redundant":
-                        index = redundancy_camera_indices[candidate_id]
-                        approximated_redundancy_candidates.append({
-                            "source_results": relative_path(results_path, output.parent),
-                            "candidate_id": str(candidate_id),
-                            "candidate_lattice_index": int(index),
-                            "reason": "candidate index missing; assigned a context camera as its redundant pose",
-                        })
+                candidate_indices = candidate.get("train_lattice_indices")
+                if index is None and candidate_indices is not None:
+                    added_indices = set(map(int, candidate_indices)) - set(map(int, context_indices))
+                    if len(added_indices) == 1:
+                        index = added_indices.pop()
+                    elif added_indices or not is_redundant:
+                        raise ValueError(f"Expected one added camera for {candidate_id} in {results_path}; "
+                                         f"found {len(added_indices)}.")
+                if index is None and is_redundant:
+                    index = redundancy_camera_indices[candidate_id]
+                    approximated_redundancy_candidates.append({
+                        "source_results": source,
+                        "candidate_id": str(candidate_id),
+                        "candidate_lattice_index": int(index),
+                        "reason": "candidate index missing; assigned a context camera as its redundant pose",
+                    })
                 if index is None:
                     raise ValueError(f"Missing candidate camera index for {candidate_id} in {results_path}")
                 _, pose, intrinsics = camera(index)
                 value = float(metric["PSNR"])
                 if not math.isfinite(value):
                     raise ValueError(f"Non-finite candidate PSNR in {results_path}")
-                is_redundant = candidate.get("status") == "redundant"
                 gain = 0.0 if is_redundant else (value - base) / abs(base)
                 candidate_psnr = base if is_redundant else value
                 sample = GainSample(scene_id, str(raw["experiment_id"]), str(candidate_id),
                                     tuple(c[0] for c in context), tuple(c[1] for c in context),
-                                    pose, gain, relative_path(results_path, output.parent),
+                                    pose, gain, source,
                                     base, candidate_psnr, tuple(c[2] for c in context), intrinsics,
                                     payload.get("camera_convention", "blender"),
                                     "redundancy_control" if is_redundant else "retrained",
@@ -248,7 +142,7 @@ def build_manifest(results_root: Path, views_root: Path, output: Path, *, limit=
                          f"under {results_root.resolve()}. Check candidate statuses and PSNR metrics. "
                          "An existing JSONL can instead be calibrated with --upgrade; labels are preserved.")
     report = audit_samples(samples)
-    report["skipped_candidates"] = skipped_candidates
+    report["skipped_candidates"] = []  # Retain the legacy audit field.
     report["approximated_redundancy_candidates"] = approximated_redundancy_candidates
     if duplicates == "mean":
         samples = deduplicate_samples(samples)
@@ -277,7 +171,7 @@ def load_manifest(path: Path) -> list[GainSample]:
                         "label_sources", "observed_gains"):
                 if raw.get(key) is not None:
                     raw[key] = tuple(raw[key])
-            root = path.resolve().parent if raw.get("path_base") == "manifest" else Path(__file__).resolve().parent
+            root = path.resolve().parent if raw.get("path_base") == "manifest" else PROJECT_ROOT
             sample = GainSample(**raw, path_root=root)
             if sample.path_base not in {None, "manifest"}:
                 raise ValueError("path_base must be manifest")
@@ -308,81 +202,6 @@ def load_manifest(path: Path) -> list[GainSample]:
     return samples
 
 
-class GainDataset(Dataset):
-    def __init__(self, samples, image_size=DEFAULT_IMAGE_SIZE):
-        self.samples = samples
-        self.image_size = image_size
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, index):
-        return self.samples[index]
-
-
-def collate_cameras(samples):
-    if not samples:
-        raise ValueError("Cannot collate an empty batch")
-    views = max(len(s.context_poses) for s in samples)
-    poses = torch.eye(4).flatten().repeat(len(samples), views, 1)
-    mask = torch.zeros(len(samples), views, dtype=torch.bool)
-    intrinsics = torch.tensor([1., 1., .5, .5]).repeat(len(samples), views, 1)
-    query_intrinsics = torch.tensor([1., 1., .5, .5]).repeat(len(samples), 1)
-    queries = []
-    calibrated = True
-    for i, sample in enumerate(samples):
-        count = len(sample.context_poses)
-        poses[i, :count] = to_opencv(torch.tensor(sample.context_poses).reshape(-1, 4, 4),
-                                     sample.camera_convention).flatten(1)
-        queries.append(to_opencv(torch.tensor(sample.candidate_pose).reshape(4, 4),
-                                 sample.camera_convention).flatten())
-        mask[i, :count] = True
-        if sample.context_intrinsics and sample.candidate_intrinsics:
-            intrinsics[i, :count] = torch.tensor(sample.context_intrinsics)
-            query_intrinsics[i] = torch.tensor(sample.candidate_intrinsics)
-        else:
-            calibrated = False
-    return {"context_poses": poses, "candidate_pose": torch.stack(queries), "mask": mask,
-            "context_intrinsics": intrinsics if calibrated else None,
-            "candidate_intrinsics": query_intrinsics if calibrated else None,
-            "targets": torch.tensor([[s.psnr_gain] for s in samples]), "samples": samples}
-
-
-@lru_cache(maxsize=64)
-def _resized_image(path, image_size, modified_ns, file_size):
-    """Bounded per-worker cache; changed files get a fresh cache key."""
-    with Image.open(path) as image:
-        image = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR)
-        return torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1)
-
-
-def collate_gain_samples(samples, image_size=DEFAULT_IMAGE_SIZE):
-    if image_size < 1:
-        raise ValueError("image_size must be positive")
-    batch = collate_cameras(samples)
-    images = torch.zeros(len(samples), batch["mask"].shape[1], 3, image_size, image_size, dtype=torch.uint8)
-    for i, sample in enumerate(samples):
-        for j, path in enumerate(sample.image_paths):
-            stat = Path(path).stat()
-            images[i, j] = _resized_image(str(path), image_size, stat.st_mtime_ns, stat.st_size)
-    batch["images"] = images
-    return batch
-
-
-# Compatibility aliases for callers of the original manifest API.
-ProcessedGainDataset = GainDataset
-collate_processed_samples = collate_gain_samples
-
-
-def preprocess_samples(results_root, views_root, output, *, image_size=DEFAULT_IMAGE_SIZE,
-                       limit=None, duplicates="mean"):
-    return build_manifest(results_root, views_root, output, limit=limit, duplicates=duplicates)
-
-
-def load_processed_dataset(path):
-    return {"format": "reconstruction_gain_psnr_jsonl_v2"}, load_manifest(path)
-
-
 def relativize_manifest(path: Path):
     """Migrate paths in place, preserving labels, observations and provenance IDs."""
     samples = load_manifest(path)
@@ -401,18 +220,6 @@ def relativize_manifest(path: Path):
     temporary.replace(path)
     path.with_suffix(".audit.json").write_text(json.dumps(audit_samples(migrated), indent=2))
     return migrated
-
-
-def require_calibration(samples, manifest=None):
-    missing = sum(not s.context_intrinsics or s.candidate_intrinsics is None for s in samples)
-    if missing:
-        name = str(manifest) if manifest is not None else "<existing-manifest.jsonl>"
-        raise ValueError(
-            f"{missing}/{len(samples)} records lack calibrated intrinsics. "
-            f"Upgrade the existing manifest with: python preprocess.py --upgrade {name}. "
-            "This uses the camera metadata beside its existing images and preserves labels; "
-            "--relativize only changes paths. Use --views-root to specify another existing camera-metadata root."
-        )
 
 
 def _transform_paths(root):

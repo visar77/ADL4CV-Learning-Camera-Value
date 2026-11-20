@@ -1,300 +1,152 @@
 # Reconstruction Gain Predictor
 
-Predict the reconstruction gain from adding a camera **before capturing its RGB image**, using existing context images and calibrated cameras.
+Predict how much adding a camera will improve a reconstruction, **before capturing that camera's RGB image**. Inputs are existing context images, their calibrated cameras, and candidate cameras. Labels are signed reconstruction gains; negative gains are retained.
 
-## TL;DR — quick start
+## Start here
 
-Run these commands from this directory, using an activated environment (`source ../.venv/bin/activate` for the existing workspace). For a fresh Linux setup, create one with `python3 -m venv .venv` and `source .venv/bin/activate`, then:
+The six scripts at the top level are commands. The `gain_predictor/` package contains their implementation.
 
-```bash
-pip install -r requirements.txt
+| Command | Reads | Produces |
+| --- | --- | --- |
+| `prepare_data.py` | Renderer scores and camera/image metadata | Labelled `manifest.jsonl` and audit |
+| `cache_features.py` | Manifest and frozen LVSM weights | Reusable image/camera embeddings |
+| `train.py` | Manifest, plus embeddings for LVSM | Trained gain model and report |
+| `compare.py` | Same inputs as training | Several models evaluated on identical splits |
+| `evaluate.py` | Trained model and its saved data split | Regression and camera-selection metrics |
+| `predict.py` | Trained model and new images/cameras (or a manifest) | Candidate gains and ranking |
 
-# 1. Assemble training records from existing renderer results and views.
-python preprocess.py --output data/processed/table.jsonl
-
-# 2. Check that the small CNN can memorize eight records on CPU.
-python debug_train.py --dataset data/processed/table.jsonl \
-  --num-samples 8 --epochs 200 --output checkpoints/quickstart/model.pt
-
-# 3. Use that trained model to score cameras directly from images/camera metadata.
-python inference.py --checkpoint checkpoints/quickstart/model.pt \
-  --input examples/inference_request.json --rank
-```
-
-This assumes the Table images and reconstruction results exist under `data/views/Table/` and `data/results/Table/`. The last command demonstrates inference, not prediction quality on new contexts. **If you already have trained weights, inference needs neither training records nor feature extraction.**
-
-To compare models on held-out contexts of the same object:
-
-```bash
-python compare.py --dataset data/processed/table.jsonl --scene-id Table \
-  --mode context --models mean view-count geometry toy \
-  --epochs 100 --output-dir checkpoints/table_comparison
-```
-
-For LVSM, first run `features.py` once, then train with `--model cached --features ...`; see step 2 below.
-
-## How the pipeline fits together
+**Preparing data** joins existing measurements into training records. **Caching features** runs a frozen neural network on the context images and cameras. Baselines and the small CNN skip caching. At prediction time, new images are encoded internally.
 
 ```text
-Training:
-renderer results + RGB/cameras → preprocess.py → manifest.jsonl
-  ├─ baselines/CNN → train.py → model.pt + report
-  └─ frozen backbone → features.py → cache → train.py → model.pt + report
-                                     compare.py runs several train.py
-                                     experiments
+renderer results + camera metadata → prepare_data.py → manifest
+  ├─ baselines / CNN ────────────────────────→ train.py → model + report
+  └─ context images + frozen LVSM → cache_features.py ──↗
 
-Inference:
-new RGB/cameras + trained weights → inference.py / predictor.py → candidate gains
-
-Evaluation:
-trained weights + labelled records → evaluate.py → regression and selection metrics
+new images + cameras + trained model → predict.py → candidate gains
 ```
 
-The command-line scripts are entry points. The shared Python modules listed below implement their common loading, model, and geometry logic.
+## Quick start
 
-### 1. Assemble training data: `preprocess.py`
-
-Joins reconstruction scores with context image paths, camera poses, and intrinsics. It writes a JSONL manifest and `<manifest>.audit.json`; it does not resize/rewrite images or run a backbone. Defaults are `data/results/` and `data/views/`; override with `--results-root` and `--views-root`.
-
-Records contain the context, candidate camera, and signed relative PSNR gain:
-
-```text
-(candidate PSNR - base PSNR) / abs(base PSNR)
-```
-
-Redundancy controls are included with a zero gain. When the result does not identify which context camera was repeated, the manifest assigns a deterministic existing context-camera pose as a proxy; the audit records these approximations. The exact selected pose cannot be recovered from such a result file, but the control label remains zero. Repeated identical capture actions are averaged, preserving their original gain observations and source IDs. `--duplicates keep` preserves separate records; pass it to training too when studying raw observations. The audit reports duplicate spread and negative gains. Labels describe retraining reconstructions from scratch; they can be negative.
-
-#### Use the full Crate reconstruction
-
-The Crate results store context indices under `reconstructions.base` and each added camera in the candidate's `train_lattice_indices`. The preprocessor reads that format and derives the one added index. Run from this directory:
+Run from this directory in a Python environment with `pip install -r requirements.txt`.
+Use the project's existing environment if available; for a fresh local environment,
+run `python3 -m venv .venv` and `source .venv/bin/activate` first.
 
 ```bash
-python preprocess.py \
+# Build labels from existing renderer outputs; adjust paths to your corpus.
+python prepare_data.py \
   --results-root ../ObjaverseRenderer/results/Crate \
   --views-root ../ObjaverseRenderer/views \
-  --output data/processed/crate_all.jsonl
-```
+  --output data/processed/crate.jsonl
 
-This scans all experiment subdirectories under `results/Crate`; the camera images/transforms come from `views/Crate`. Crate redundancy entries without an explicit candidate index are included with `candidate_id` values such as `redundancy-1` and `redundancy-2`, `psnr_gain: 0.0`, and `observed_gains: [0.0]`. Because the selected repeated camera is not identified in those result files, their candidate pose uses a deterministic context-camera proxy; see `approximated_redundancy_candidates` in the audit. Other candidate labels use the PSNR values recorded in each `results.json` directly:
+# Fit a fast baseline, holding out entire contexts.
+python train.py --dataset data/processed/crate.jsonl \
+  --model geometry --mode context --output checkpoints/crate/model.pt
 
-```text
-(candidate PSNR - base PSNR) / abs(base PSNR)
-```
+python evaluate.py --checkpoint checkpoints/crate/model.pt --split test
 
-Start with a same-object, held-out-context run and a fast geometry baseline:
-
-```bash
-python train.py --dataset data/processed/crate_all.jsonl --scene-id Crate \
-  --model geometry --mode context --epochs 100 \
-  --output checkpoints/crate_geometry/model.pt \
-  --log-dir runs/crate_geometry
-```
-
-Use the toy CNN to include the context RGB images:
-
-```bash
-python train.py --dataset data/processed/crate_all.jsonl --scene-id Crate \
-  --model toy --mode context --epochs 100 \
-  --output checkpoints/crate_toy/model.pt \
-  --log-dir runs/crate_toy
-```
-
-The default context split keeps all candidates from one physical context together. This evaluates generalization to held-out Crate contexts, not to unseen objects. For cached LVSM-head training, first extract features for this manifest with `features.py`, then pass the resulting `features.pt` to `train.py --model cached`; this is substantially more compute-intensive.
-
-Evaluate or rank predictions for a recorded experiment:
-
-```bash
-python evaluate.py --checkpoint checkpoints/crate_geometry/model.pt --split test
-python inference.py --checkpoint checkpoints/crate_geometry/model.pt \
-  --dataset data/processed/crate_all.jsonl --scene-id Crate \
+# Rank the recorded candidates in one context.
+python predict.py --checkpoint checkpoints/crate/model.pt \
+  --dataset data/processed/crate.jsonl --scene-id Crate \
   --experiment-id random_5_seed_77 --rank
 ```
 
-The second command is an offline comparison against recorded candidate labels. For a new, unmeasured camera, use `inference.py --input` with a request containing the Crate context images and calibrated camera poses; the bundled `examples/inference_request.json` is for Table and is not the Crate request.
-
-`table_v2.jsonl` was an example filename, not a separate dataset. Regenerated manifests include calibration, redundancy controls, and duplicate provenance: currently 119 unique Table records (100 candidate runs + 20 controls − one duplicate).
-
-Image/source paths are **relative to the manifest**. New checkpoint references are relative to the checkpoint. Move the data/cache/run tree while preserving its layout; no username or checkout location is required.
-
-**If you followed the quick start, skip migration:** it creates `data/processed/table.jsonl` with relative paths already. It does not create a file named `table_v2.jsonl`.
-
-Only for an older manifest that actually exists and still contains absolute paths, run the optional migration with that file's name:
+For a CPU CNN smoke test on eight records:
 
 ```bash
-python preprocess.py --relativize data/processed/table.jsonl
+python train.py --dataset data/processed/crate.jsonl \
+  --model toy --mode overfit --device cpu --batch-size 1 --num-samples 8 \
+  --epochs 200 --scheduler none --early-stopping-patience 0 \
+  --output checkpoints/smoke/model.pt
 ```
 
-This converts paths in place without changing labels. Use your existing filename if it differs; there is no separate migration step for newly generated data.
+Overfitting checks the pipeline; its scores do not establish generalization.
 
-#### Existing datasets from before the calibration changes
-
-Code updates do not update generated data: `data/` is Git-ignored. A legacy manifest can still have valid images/poses/labels but lack the new `context_intrinsics` and `candidate_intrinsics`. `--relativize` fixes paths **only** and does not add calibration.
-
-Upgrade that existing manifest in place, using the camera transforms already beside its images:
+For LVSM, cache embeddings once and train a small head on them:
 
 ```bash
-python preprocess.py --upgrade data/processed/table.jsonl
-# Only if the metadata lives separately:
-# python preprocess.py --upgrade data/processed/table.jsonl --views-root /path/to/existing/views
+python cache_features.py --dataset data/processed/crate.jsonl \
+  --output data/features/crate --device cuda --precision bf16
+
+python train.py --dataset data/processed/crate.jsonl --model cached \
+  --features data/features/crate/features.pt --head pose \
+  --output checkpoints/crate_lvsm/model.pt
 ```
 
-This preserves record count, poses, signed gains, and duplicate provenance, and creates a `.jsonl.bak` before changing the file. It does not need reconstruction results, retraining, or candidate RGB. It matches camera poses against the existing transform JSONs and never guesses a field of view. A 100-row legacy manifest remains 100 rows; upgrade does not manufacture the extra controls from a full rebuild.
+LVSM defaults to 512-pixel inputs and 3,072 latent tokens. The first extraction can download about 2 GB of weights and is compute-intensive; head training does not rerun LVSM. See [feature caching](docs/feature_cache.md) for resuming, memory controls, and reduced-size smoke tests.
 
-`preprocess.py --output ...` is a different operation: it rebuilds labels from `--results-root` (default `data/results`). A “no results.json files” error concerns that rebuild lookup, not whether the existing manifest/images were moved or whether CUDA works. A bare positional manifest filename is not accepted; use `--upgrade` for this compatibility repair.
+## Where the code lives
 
-### 2. Extract frozen features when needed: `features.py`
+| I want to change… | Start in `gain_predictor/` |
+| --- | --- |
+| How renderer outputs become labels | `data/manifest.py` and `data/records.py` |
+| How inputs are batched or split | `data/batches.py` and `data/splits.py` |
+| The networks | `models/lvsm.py`, `models/cnn.py`, or `models/heads.py` |
+| How embeddings are extracted and reused | `feature_cache.py` |
+| How the model is fitted or judged | `training.py` and `metrics.py` |
+| How new cameras are scored | `inference.py` |
+| How saved runs and labelled records are scored | `checkpoints.py` and `scoring.py` |
 
-For cached-backbone training, encodes each distinct context once, decodes its candidate cameras, and saves embeddings. Repeating extraction reuses completed context/candidate files. **This step accelerates training; direct inference performs the backbone computation internally.** Baselines and the CNN skip it.
+`models/` defines the neural networks and their tensor operations. `GainEstimator` is the user-facing API: it loads trained weights, prepares images/cameras, and returns gains. To change the gain head, edit `models/heads.py`; to change what happens when a user predicts, start at `inference.py`.
 
-Production LVSM extraction on a CUDA machine, followed by head training:
+Generated `data/`, `checkpoints/`, and `runs/` remain separate from source code and are Git-ignored. Tests and the independent LVSM verifier live in `tests/`.
+
+## Predict on new inputs
+
+In Python, import `GainEstimator` from `gain_predictor` and call
+`predict(context_images, context_poses, candidate_poses, ...)` with a common
+horizontal field of view or per-camera intrinsics.
+
+The CLI accepts the same inputs as JSON:
 
 ```bash
-python features.py --dataset data/processed/table.jsonl \
-  --output data/features/lvsm512 --image-size 512 --lvsm-latent-tokens 3072 \
-  --device cuda --precision bf16
-
-python train.py --dataset data/processed/table.jsonl --model cached \
-  --features data/features/lvsm512/features.pt --mode context --epochs 100
+python predict.py --checkpoint checkpoints/crate_lvsm/model.pt \
+  --input path/to/request.json --rank
 ```
 
-The **frozen backbone** turns context RGB/cameras and candidate cameras into a 768-dimensional candidate-conditioned embedding. The small trainable head maps that embedding to reconstruction gain; the backbone is not optimized during head training.
+[examples/inference_request.json](examples/inference_request.json) shows the format using Table images; replace its images and cameras for your context. Image references resolve relative to the request. Prediction needs the trained head and matching backbone weights, but no training manifest or feature cache.
 
-| Phase | Does LVSM run? |
-|---|---|
-| `preprocess.py` | No; assembles metadata/labels only. |
-| First `features.py` run | Yes: one encoding per unique context, then candidate decoding. |
-| Repeat extraction with complete cache | No; reuses cached embeddings, even if backbone weights are absent. |
-| Cached-head training, including rolling validation | No; uses embeddings already loaded in memory. |
-| Direct inference on new images/cameras | Yes; loads weights once and shares context encoding across candidates. |
-| Offline evaluation/inference | Uses a valid cache when available; otherwise computes features online. |
+`predict()` returns signed gains. `predict_utility()` returns `max(0, gain)`, allowing the option of keeping the base reconstruction. CLI ranking uses this utility, while regression and forced-capture evaluation retain signed gains. See [prediction details](docs/prediction.md) for tensor formats, calibration, and batching.
 
-The first cache build is the long step: it may download roughly 2 GB of weights, hash source files, then run encoding/decoding. At 512 resolution each image produces 4,096 tokens; the encoder processes `3072 + 4096 × context_views` tokens through full attention. Many views and CPU execution are especially expensive. Phase messages print **before** this work starts, and the timing JSON separates hashing, loading, encoding, and decoding. Head-training epochs do not rebuild this cache.
+## Data and experiment rules
 
-The official `lvsm_scene_encoder_decoder_res512.pt` weights download if missing. `--lvsm-checkpoint` selects another location/checkpoint. The 3,072 latent tokens are the pretrained model's learned scene-representation capacity; each token has 768 features. `--candidate-batch-size` controls decoder memory.
+- New training and comparison runs default to signed PSNR change in dB (`candidate_psnr - base_psnr`). Use `--target relative` to reproduce the previous target, which divides that change by `abs(base_psnr)`. Candidate RGB and measured PSNR are never prediction inputs.
+- Each candidate is one independent addition to its context. Labels retain the measured result, including negative gains. Keep different reconstruction protocols in separate datasets; the manifest builder does not enforce protocol separation.
+- Repeated physical actions are averaged with their observations and provenance retained. Use `--duplicates keep` in both preparation and training to retain individual records. Redundancy controls have zero gain; missing repeated-camera IDs use a deterministic context-camera proxy recorded in the audit.
+- `--mode context` holds out entire contexts; `--mode scene` holds out objects; `--mode overfit` uses only a training set. The default split is 80/10/10. See [training and evaluation](docs/training.md) for models, heads, validation budgets, and metrics.
+- Manifests reference images relative to the manifest; checkpoints reference data/cache/weights relative to the checkpoint. Preserve that layout when copying artifacts. Tensor saves use CPU storage. Devices default to `auto` (CUDA when available, otherwise CPU).
 
-For a **CPU integration/overfitting smoke test**:
+To repair an **existing** old manifest, without reconstruction results or retraining:
 
 ```bash
-python features.py --dataset data/processed/table.jsonl --num-samples 8 \
-  --output data/features/lvsm_smoke --image-size 16 --lvsm-latent-tokens 4 --device cpu
-
-python train.py --dataset data/processed/table.jsonl --num-samples 8 \
-  --model cached --features data/features/lvsm_smoke/features.pt --mode overfit \
-  --epochs 200 --scheduler none --early-stopping-patience 0
+python prepare_data.py --upgrade data/processed/old.jsonl
+# If camera metadata is stored separately, add --views-root /path/to/views.
 ```
 
-Reduced resolution/latent counts change pretrained behavior; this smoke test does not validate production feature quality. Full-size CPU extraction is expensive. FP32 is the default portable precision. Optional BF16 also works on CPU; on a GPU without BF16 support, execution falls back to FP32 with a notice and possible small numerical differences.
+Upgrade recovers calibration from existing camera transforms, preserves labels and poses, and creates a `.jsonl.bak`. It does not guess a field of view. `--relativize` changes paths only; newly prepared manifests need neither operation. Preparation defaults to `data/results` and `data/views` when roots are omitted.
 
-The cache contains `features.pt`, phase timings, and resumable context/candidate files. Content/configuration hashes reject incompatible entries. Partial extraction covers only selected samples; match training selection flags or extract the whole manifest.
+## Previous names
 
-### 3. Train or compare: `train.py`, `debug_train.py`, `compare.py`
+| Before | Now |
+| --- | --- |
+| `preprocess.py` | `prepare_data.py` |
+| `features.py` | `cache_features.py`; cache implementation in `gain_predictor/feature_cache.py` |
+| `inference.py` command | `predict.py` |
+| `from predictor import GainEstimator` | `from gain_predictor import GainEstimator` |
+| `model.py` | Separate networks in `gain_predictor/models/` |
+| `dataset.py`, `experiments.py` | `gain_predictor/data/` and `metrics.py` |
+| `runtime.py` | `checkpoints.py` and `scoring.py` inside the package |
+| `debug_train.py` | Explicit `train.py` smoke-test command above |
+| `verify_lvsm.py` | `python -m tests.verify_lvsm` |
 
-`train.py` selects records, creates splits, fits normalization on training samples, trains the chosen model, and writes the best checkpoint and report. Cached training optimizes only the head and never initializes LVSM. Use `--target delta-db` for absolute PSNR improvement instead of relative gain; measured PSNR is never a model input.
+Update old commands/imports to these names. Existing manifests and feature caches can be reused for dB training. The JSONL `psnr_gain` and `observed_gains` fields still store relative gains. Training reads the saved PSNR scores to derive dB labels, or recovers them from `psnr_gain` and `base_psnr` if the candidate score is absent. If a manifest lacks `base_psnr`, use `--target relative` to train from that file as-is.
 
-| Model | What is trained |
-|---|---|
-| `mean` | Constant mean training gain |
-| `view-count` | Ridge regression on log context-view count |
-| `geometry` | Ridge regression on camera distances, directions, count, and relative candidate position |
-| `toy` | Small CNN with context/candidate pose conditioning |
-| `cached` / `lvsm` | Gain head on frozen candidate embeddings, optionally with relative camera poses |
+Evaluation and prediction use the checkpoint's saved `target`. Report and prediction field names are unchanged. In particular, `predicted_gain` uses dB for `target: delta-db` and relative units for `target: relative`. Older relative models can still predict and evaluate with their original artifacts. Checkpoints from before the earlier camera/mask corrections still require retraining.
 
-**Use `--head pose` for experiments spanning orbit and free-moving cameras.** For each context camera the head computes its pose in the candidate camera's frame. Three translation components describe where it is, and two rotation-matrix columns encode its full orientation, including roll. The third column is determined by the first two. This representation requires calibrated camera poses and has no object-center or common look-at assumption.
-
-Translations use the RMS distance of context camera centers from their centroid as a length scale, followed by elementwise `asinh` to compress large offsets. For one center or negligible spread the scale falls back to one input unit. Use consistent pose units for these trajectories. The geometry branch is independent of the world origin, world orientation, and context ordering. LVSM has its own existing first-context orientation convention.
-
-A shared 16-unit layer encodes each relative pose jointly. Mean and max pooling over valid views, plus log view count, summarize the set. A linear pose score and a 32-unit correction conditioned on both the pose summary and the LVSM embedding predict signed gain. LVSM supplies image and intrinsic information relevant to visibility. The head has 25,890 trainable parameters with a 768-D embedding. It uses the same feature cache for all pose regimes. The two alternative heads are the default embedding-only `--head mlp` and the orbit-specific `--head coverage`, whose geometry branch summarizes only viewing-direction separation and count.
-
-Add `--head pose` to the cached training command. Compare it with a width-matched MLP on the same scene splits using top-choice regret and signed-gain MAE. Orbit-only labels couple camera position and orientation. Testing transfer to free motion requires held-out scenes with motions such as lateral translation at fixed orientation and roll at fixed position, together with measured gains. These tests also probe whether the pooled LVSM embedding carries enough information about occlusion and scene depth.
-
-| Mode | Intended experiment |
-|---|---|
-| `overfit` | Memorize the selected records; only a training report |
-| `context` (default) | Hold out entire contexts and all their candidates, including within one object |
-| `scene` | Hold out entire objects |
-
-Filter with `--scene-id`, `--experiment-id`, and `--num-samples` (a deterministic prefix per scene after duplicate handling). Use `overfit` for a single-context subset. Default splits are **80/10/10 by context/scene**, rounded for small datasets; the current Table data gives 8/1/1 contexts. Override fractions or supply `--split-file`; `--test-fraction 0` disables testing.
-
-`debug_train.py` is a thin wrapper around `train.py`, defaulting to CPU, the toy CNN, batch size one, and overfit mode with no scheduler/early stopping. `compare.py` calls the same trainer for each requested model, verifies identical splits, and combines their reports. To include LVSM, add `cached` to `--models` and pass `--features`.
-
-Common controls are `--epochs`, `--batch-size`, `--learning-rate`, `--scheduler`, and `--early-stopping-patience`; each script's `--help` lists the remaining options. Default dropout/weight decay are zero for overfitting experiments.
-
-### 4. Inspect results: `evaluate.py`
-
-Training writes `model.pt` and `model.report.json`; comparisons also write `comparison.json`. Unless overridden, run checkpoints and TensorBoard logs go to timestamped directories under `checkpoints/` and `runs/`.
-
-`evaluate.py` reloads the exact saved split and verifies its observations, without training:
-
-```bash
-python evaluate.py --checkpoint checkpoints/table_comparison/geometry/model.pt --split test
-# For an overfitting run, use --split train.
-tensorboard --logdir runs --port 6006
-```
-
-Reports contain normalized MSE, MAE/RMSE, dB error when available, and per-context candidate-selection metrics: regret, selected/oracle gain, pairwise accuracy, random expected gain, and blindspot-heuristic gain. Ranking averages contexts within objects, then objects equally. Ties use expected utility under uniform tie-breaking. During neural training, validation runs **one minibatch per epoch** (up to 8 records), cycling through the validation split. A sample-weighted rolling mean of the last **10 validation batches** drives checkpoint selection, scheduling, and early stopping. This is a smoothed estimate across recent model states. Configure `--validation-batch-size`, `--validation-batches`, and `--validation-window`; history/TensorBoard include sample counts and timing. Full split reports run once at the end after restoring the selected checkpoint. Overfit mode uses the existing epoch training loss, with no extra validation pass. Overfit scores and within-object scores measure different things; neither establishes unseen-object generalization.
-
-### 5. Predict on new inputs: `inference.py` and `predictor.py`
-
-`inference.py --input examples/inference_request.json` is the direct CLI. The example has `context` entries with `image`, `pose`, and `intrinsics`, and `candidates` entries with `id`, `pose`, and `intrinsics`. Image paths are relative to the request file.
-
-Both inference modes report `predicted_gain` for using the candidate and `predicted_utility = max(0, predicted_gain)` for the choice between using it and keeping the base. The conversion happens in the checkpoint's target units after reversing target standardization. For example, a predicted gain of −0.3 dB has utility 0 dB. With `--rank`, equal utilities retain their input order. If all utilities are zero, keeping the base is tied for best. Training labels, regression errors, and the existing forced-capture ranking metrics use signed gains. Measured reconstruction quality can fall when FastGS uses the new view.
-
-`predictor.py` provides the same behavior as a Python API:
-
-```python
-import math
-from predictor import GainEstimator
-
-predictor = GainEstimator("checkpoints/run/model.pt")  # Auto-selects CUDA when available.
-utilities = predictor.predict_utility(
-    context_images=images, context_poses=poses, candidate_poses=candidates,
-    camera_angle_x=math.radians(50), camera_convention="blender",
-)
-```
-
-Use `predict()` to retrieve signed gains. If you need both outputs, call `candidate_utility(gains)` from `predictor.py` on that tensor to reuse the same predictions. Both API methods accept image paths, PIL/NumPy RGB images, or PyTorch `[N,3,H,W]` tensors. Floating input is `[0,1]` and uint8 is `[0,255]`. Poses are camera-to-world matrices. Use `opencv` for OpenCV axes. Supply horizontal FOV in radians or context/candidate intrinsics as pixel K or normalized `[fx/W,fy/H,cx/W,cy/H]`. Pixel K refers to original dimensions. Candidate size defaults to the first image.
-
-Loading/resizing, camera conversion, rays, and scene normalization happen internally. The predictor loads the backbone once and shares one context encoding across candidates per call. `candidate_batch_size` controls decoder memory. Keep the head and matching backbone weights for deployment; their saved relative reference is used automatically, with `--lvsm-checkpoint` / `backbone_checkpoint=` as an override.
-
-For offline inspection, `inference.py --dataset ... --scene-id ... --experiment-id ... --rank` instead scores labelled manifest records. That mode can reuse cached features and display ground truth.
-
-### 6. Verify the implementation: `verify_lvsm.py` and tests
+## Validation
 
 ```bash
 python -m unittest discover -s tests -v
-python verify_lvsm.py --checkpoint lvsm_scene_encoder_decoder_res512.pt
+python -m tests.verify_lvsm --checkpoint lvsm_scene_encoder_decoder_res512.pt
 ```
 
-`verify_lvsm.py` compares the real checkpoint on a small input against independent implementations of the [official LVSM equations](https://github.com/Haian-Jin/LVSM), using explicit attention and patch slicing. It checks numerical computation, not production-resolution GPU throughput or the original CUDA/xformers kernel.
-
-## Moving to another Linux machine
-
-Training, extraction, evaluation, and inference default to `--device auto`: CUDA when available, otherwise CPU. `debug_train.py` intentionally defaults to CPU; use `--device cpu` or `--device cuda:1` to override elsewhere. Install a CUDA-enabled PyTorch build and working GPU driver to use CUDA; the predictor requires no extra custom CUDA extensions.
-
-Checkpoints and caches store **CPU tensors** and relative file references, without a GPU index or device-specific compiled code. Copy the required data/cache/weights with their relative layout intact. New inputs need the head and matching backbone weights, not the training manifest/cache. Floating-point results can differ slightly between hardware/precision settings. The tests include relocation and a CUDA→CPU round trip (skipped when CUDA hardware is unavailable).
-
-## Shared modules and supporting files
-
-These modules are imported by the scripts; they are not additional pipeline commands.
-
-| File | Responsibility |
-|---|---|
-| `dataset.py` | Manifest records, label audits/duplicate handling, RGB loading, padded batches, and camera metadata. |
-| `geometry.py` | Blender→OpenCV conversion, calibrated rays, context-only normalization, and pose features. |
-| `model.py` | CNN, LVSM adapter, replaceable `FeatureBackbone` interface, and gain head. |
-| `experiments.py` | Record selection, grouped splits, observation signatures, and selection metrics. |
-| `runtime.py` | Shared model/checkpoint loading and prediction used by training/evaluation/inference. |
-| `paths.py` | Resolve portable references relative to their owning file. |
-| `devices.py` | Select runtime device/precision without binding artifacts to hardware. |
-| `requirements.txt` | Python dependencies. |
-| `examples/inference_request.json` | Direct-inference request using the existing Table images/cameras. |
-| `tests/test_pipeline.py` | Basic manifest, image preparation, and model smoke tests. |
-| `tests/test_research_pipeline.py` | Camera/backbone correctness, caching, splits, metrics, and training/CLI integration. |
-| `tests/test_portability_and_inference.py` | Relocation, different working directories, and inference without training artifacts. |
-| `tests/test_validation_and_devices.py` | Rolling validation budgets/weighting, 80/10/10 defaults, and device-independent saves. |
-| `tests/test_manifest_upgrade.py` | Legacy calibration upgrade without raw results/candidate RGB; labels, backups, and failed-upgrade safety. |
-| `.gitignore` | Excludes generated data, runs, checkpoints, and Python caches. |
-
-For another backbone, implement `FeatureBackbone.encode_context()` and `decode_candidates()` in an adapter and register its factory, or pass it to `features.extract_features()`. Context state is a dictionary of tensors; candidate features are `[B,Q,D]`. Cached-head training accepts arbitrary `D`, so the experiment/training code stays shared.
-
-Camera handling uses calibrated pixel-center rays and a context-only coordinate frame/scale, reused for every candidate. Padded views are masked in every encoder block. LVSM loading validates all required weight shapes and memory-maps model tensors. Predictor checkpoints from before these camera/mask corrections require retraining.
+The second command requires real LVSM weights and compares small inputs against independent attention and tokenization equations. CPU tests do not establish production GPU throughput or prediction quality.

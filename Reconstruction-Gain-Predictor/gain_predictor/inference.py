@@ -1,17 +1,18 @@
 """Direct gain inference from ordinary images and cameras; no manifests or labels."""
 from __future__ import annotations
 
-import math
 from pathlib import Path
+import math
 
+from PIL import Image
 import numpy as np
 import torch
-from PIL import Image
 
-from geometry import geometry_features, to_opencv
-from model import feature_head_inputs
-from runtime import load_frozen_backbone, load_run, normalize_matrix
-from devices import resolve_device, compute_precision, autocast_for
+from gain_predictor.checkpoints import load_frozen_backbone, load_run
+from gain_predictor.devices import autocast_for, compute_precision, resolve_device
+from gain_predictor.geometry import geometry_features, to_opencv
+from gain_predictor.models.heads import feature_head_inputs
+from gain_predictor.scoring import normalize_matrix
 
 
 def candidate_utility(predicted_gain: torch.Tensor) -> torch.Tensor:

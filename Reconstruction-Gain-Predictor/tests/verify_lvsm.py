@@ -8,14 +8,14 @@ prepared inputs; it does not test the original CUDA/xformers kernel.
 """
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+import argparse
 
-import torch
 from torch.nn import functional as F
+import torch
 
-from geometry import apply_frame, context_frame, rays
-from model import LVSMFeatureBackbone, _LVSMSceneEncoder
+from gain_predictor.geometry import apply_frame, context_frame, rays
+from gain_predictor.models.lvsm import LVSMFeatureBackbone
 
 
 def reference_block(block, x, valid=None):

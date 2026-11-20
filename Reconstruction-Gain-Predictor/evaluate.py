@@ -1,14 +1,16 @@
 """Evaluate exact saved splits using regression and candidate-selection metrics."""
 from __future__ import annotations
 
+from pathlib import Path
 import argparse
 import json
-from pathlib import Path
 
-from dataset import load_manifest
-from experiments import restored_split, selection_metrics
-from runtime import load_run, score_samples
-from devices import resolve_device
+from gain_predictor.checkpoints import load_run
+from gain_predictor.data.manifest import load_manifest
+from gain_predictor.data.splits import restored_split
+from gain_predictor.devices import resolve_device
+from gain_predictor.metrics import selection_metrics
+from gain_predictor.scoring import score_samples
 
 
 def main(argv=None):

@@ -1,16 +1,15 @@
+from pathlib import Path
 import json
 import tempfile
 import unittest
-from pathlib import Path
 
-import torch
 from PIL import Image
+import torch
 
-import sys
-
-sys.path.insert(0, str(Path(__file__).parents[1]))
-from dataset import collate_gain_samples, load_manifest
-from model import ContextPoseCNN, _normalize_lvsm_rgb
+from gain_predictor.data.batches import collate_gain_samples
+from gain_predictor.data.manifest import load_manifest
+from gain_predictor.models.cnn import ContextPoseCNN
+from gain_predictor.models.lvsm import _normalize_lvsm_rgb
 
 
 class PipelineTests(unittest.TestCase):

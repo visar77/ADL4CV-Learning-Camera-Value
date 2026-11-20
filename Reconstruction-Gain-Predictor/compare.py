@@ -1,13 +1,14 @@
 """Run cheap baselines and optional cached LVSM on exactly the same split."""
 from __future__ import annotations
 
+from pathlib import Path
 import argparse
 import json
-from pathlib import Path
 
-from train import parse_args, train
-from runtime import MODELS
-from paths import relative_path
+from gain_predictor.artifacts import relative_path
+from gain_predictor.models import MODELS
+from gain_predictor.training import train
+from train import parse_args
 
 
 def main(argv=None):
