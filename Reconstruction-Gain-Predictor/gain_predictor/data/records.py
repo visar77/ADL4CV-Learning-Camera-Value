@@ -14,6 +14,9 @@ import torch
 from gain_predictor.artifacts import resolve_reference
 
 
+DEFAULT_TARGET = "delta-db"
+
+
 @dataclass(frozen=True)
 class GainSample:
     scene_id: str

@@ -140,7 +140,7 @@ Upgrade recovers calibration from existing camera transforms, preserves labels a
 
 Update old commands/imports to these names. Existing manifests and feature caches can be reused for dB training. The JSONL `psnr_gain` and `observed_gains` fields still store relative gains. Training reads the saved PSNR scores to derive dB labels, or recovers them from `psnr_gain` and `base_psnr` if the candidate score is absent. If a manifest lacks `base_psnr`, use `--target relative` to train from that file as-is.
 
-Evaluation and prediction use the checkpoint's saved `target`. Report and prediction field names are unchanged. In particular, `predicted_gain` uses dB for `target: delta-db` and relative units for `target: relative`. Older relative models can still predict and evaluate with their original artifacts. Checkpoints from before the earlier camera/mask corrections still require retraining.
+Evaluation and prediction use the checkpoint's saved `target`. The default `delta-db` model reports signed dB in both `predicted_gain` and `predicted_delta_db`. Models trained with `--target relative` report their native relative units in `predicted_gain`. Checkpoints from before the earlier camera/mask corrections still require retraining.
 
 ## Validation
 

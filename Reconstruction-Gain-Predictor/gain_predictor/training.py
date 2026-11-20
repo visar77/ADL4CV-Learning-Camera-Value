@@ -30,11 +30,11 @@ from gain_predictor.scoring import (
 
 
 class RollingValidation:
-    """Bounded validation work; sample-weighted MSE over recent batches.
+    """Sample-weighted MSE over recent validation batches.
 
     The iterator persists across epochs and restarts only after every validation
-    batch has been visited. Its independent RNG never perturbs training sampling.
-    The estimate includes predictions from recent model states by design.
+    batch has been visited. A window refreshed by a full sweep each epoch
+    contains only predictions from the current model state.
     """
     def __init__(self, loader, predict_batch, window=10, batches_per_update=1):
         if not len(loader) or min(window, batches_per_update) < 1:
@@ -160,7 +160,7 @@ def train(args):
     if is_baseline:
         monitor_kind = "full_loss"
     elif groups["validation"]:
-        monitor_kind = "rolling_validation"
+        monitor_kind = "full_validation" if args.validation_batches is None else "rolling_validation"
     else:
         monitor_kind = "training_epoch_loss"
 
@@ -177,7 +177,7 @@ def train(args):
             save(0, monitor)
         else:
             history = _fit_neural(model, args, config, groups, matrices, targets,
-                                  monitor_name, save, writer)
+                                  monitor_kind, save, writer)
         checkpoint = torch.load(args.output, map_location="cpu", weights_only=True)
         model.load_state_dict(checkpoint["model"])
         reports = {}
@@ -214,7 +214,7 @@ def _fit_ridge(model, matrix, targets, config, args):
     model.weight.copy_(weights[1:].T.float().to(args.device))
 
 
-def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, save, writer):
+def _fit_neural(model, args, config, groups, matrices, targets, monitor_kind, save, writer):
     mean, std = config["target_mean"], config["target_std"]
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     if args.scheduler == "plateau":
@@ -227,15 +227,15 @@ def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, sa
         scheduler = None
 
     if args.model == "toy":
-        def make_loader(split, batch_size, generator=None):
+        def make_loader(split, batch_size, generator=None, *, shuffle=True):
             return toy_loader(groups[split], {**config, "batch_size": batch_size},
-                              shuffle=True, generator=generator, device=args.device, target=args.target)
+                              shuffle=shuffle, generator=generator, device=args.device, target=args.target)
 
         def predict_batch(model, batch):
             prediction = forward_toy(model, batch, args.device)
             return prediction, ((batch["targets"] - mean) / std).to(args.device)
     else:
-        def make_loader(split, batch_size, generator=None):
+        def make_loader(split, batch_size, generator=None, *, shuffle=True):
             x = normalize_matrix(matrices[split], config)
             y = (targets[split] - mean) / std
             sampler = None
@@ -245,21 +245,33 @@ def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, sa
                 sampler = WeightedRandomSampler([1 / counts[scene] for scene in scenes],
                                                 len(scenes), replacement=True)
             return DataLoader(TensorDataset(x, y), batch_size=batch_size,
-                              shuffle=sampler is None, sampler=sampler, generator=generator)
+                              shuffle=shuffle and sampler is None, sampler=sampler, generator=generator)
 
         def predict_batch(model, batch):
             inputs, target = (value.to(args.device) for value in batch)
             return model(inputs), target
 
     loader = make_loader("train", args.batch_size)
-    rolling = None
+    validation_monitor = None
+    monitor_tag = "loss/train_monitor"
+    rolling = monitor_kind == "rolling_validation"
     if groups["validation"]:
         generator = torch.Generator().manual_seed(args.seed + 104729)
-        validation = make_loader("validation", args.validation_batch_size, generator)
-        rolling = RollingValidation(validation, predict_batch, args.validation_window,
-                                     args.validation_batches)
-        print(f"Validation: up to {args.validation_batches} batches of {args.validation_batch_size} "
-              f"per epoch; rolling window {args.validation_window} batches", flush=True)
+        validation_loader = make_loader("validation", args.validation_batch_size, generator,
+                                        shuffle=rolling)
+        if rolling:
+            monitor_tag = "loss/validation_rolling"
+            window, batches = args.validation_window, args.validation_batches
+            print(f"Validation: up to {batches} batches of {args.validation_batch_size} "
+                  f"per epoch; rolling window {window} batches", flush=True)
+        else:
+            monitor_tag = "loss/validation"
+            # A full pass replaces the entire window before reporting the loss.
+            window = batches = len(validation_loader)
+            print(f"Validation: full fold of {len(groups['validation'])} records per epoch "
+                  f"(batch size {args.validation_batch_size})", flush=True)
+        validation_monitor = RollingValidation(validation_loader, predict_batch,
+                                               window=window, batches_per_update=batches)
 
     history = []
     best_loss = math.inf
@@ -279,7 +291,7 @@ def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, sa
             total += loss.item() * len(target)
         train_loss = total / len(groups["train"])
         validation_start = time.perf_counter()
-        validation = rolling.update(model) if rolling is not None else None
+        validation = validation_monitor.update(model) if validation_monitor is not None else None
         monitor = validation["loss"] if validation is not None else train_loss
         validation_seconds = time.perf_counter() - validation_start
         if scheduler is not None:
@@ -293,7 +305,7 @@ def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, sa
                  "validation": validation, "validation_seconds": validation_seconds}
         history.append(entry)
         writer.add_scalar("loss/train", train_loss, epoch)
-        writer.add_scalar(f"loss/{monitor_name}_rolling" if rolling is not None else "loss/train_monitor", monitor, epoch)
+        writer.add_scalar(monitor_tag, monitor, epoch)
         writer.add_scalar("time/validation_seconds", validation_seconds, epoch)
         if validation is not None:
             writer.add_scalar("validation/samples_seen", validation["samples_seen"], epoch)
@@ -301,8 +313,9 @@ def _fit_neural(model, args, config, groups, matrices, targets, monitor_name, sa
         writer.add_scalar("time/epoch_seconds", entry["seconds"], epoch)
         writer.add_scalar("learning_rate", entry["learning_rate"], epoch)
         if epoch == 1 or epoch % args.log_every == 0:
+            monitor_name = "validation" if validation is not None else "train"
             print(f"epoch {epoch}/{args.epochs} train={train_loss:.6f} {monitor_name}={monitor:.6f}"
-                  f"{' (rolling)' if rolling is not None else ''}", flush=True)
+                  f"{' (rolling)' if rolling else ''}", flush=True)
         if monitor < best_loss - args.min_delta:
             best_loss, best_epoch = monitor, epoch
             save(epoch, monitor)

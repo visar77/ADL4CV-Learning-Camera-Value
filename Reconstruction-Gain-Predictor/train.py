@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import argparse
 
+from gain_predictor.data.records import DEFAULT_TARGET
 from gain_predictor.devices import resolve_device
 from gain_predictor.models import MODELS
 from gain_predictor.models.heads import DEFAULT_HEAD_WIDTH, FEATURE_HEADS
@@ -27,14 +28,16 @@ def parse_args(argv=None):
     parser.add_argument("--scene-id")
     parser.add_argument("--experiment-id")
     parser.add_argument("--duplicates", choices=("mean", "keep"), default="mean")
-    parser.add_argument("--target", choices=("delta-db", "relative"), default="delta-db",
-                        help="Signed PSNR change in dB (default), or the previous relative gain")
+    parser.add_argument("--target", choices=("delta-db", "relative"), default=DEFAULT_TARGET,
+                        help="Signed candidate PSNR minus base PSNR in dB (default), or relative gain")
     parser.add_argument("--split-file", type=Path)
     parser.add_argument("--validation-fraction", type=float, default=.1)
     parser.add_argument("--test-fraction", type=float, default=.1)
     parser.add_argument("--validation-batch-size", type=int, default=8)
-    parser.add_argument("--validation-batches", type=int, default=1, help="Maximum validation batches per epoch")
-    parser.add_argument("--validation-window", type=int, default=10, help="Number of recent batches in the rolling mean")
+    parser.add_argument("--validation-batches", type=int,
+                        help="Enable rolling validation with this batch limit per epoch (toy default: 1)")
+    parser.add_argument("--validation-window", type=int,
+                        help="Enable rolling validation with this many recent batches (toy default: 10)")
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.)
     parser.add_argument("--dropout", type=float, default=0.)
@@ -60,8 +63,13 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.head_hidden_dim is None:
         args.head_hidden_dim = DEFAULT_HEAD_WIDTH[args.head_type]
-    if min(args.validation_batch_size, args.validation_batches, args.validation_window) < 1:
+    validation_limits = (args.validation_batch_size, args.validation_batches, args.validation_window)
+    if any(limit is not None and limit < 1 for limit in validation_limits):
         parser.error("Validation batch size, batch budget, and window must be positive")
+    rolling_requested = args.validation_batches is not None or args.validation_window is not None
+    if args.model not in {"cached", "lvsm"} or rolling_requested:
+        args.validation_batches = args.validation_batches or 1
+        args.validation_window = args.validation_window or 10
     args.device = resolve_device(args.device)
     if min(args.epochs, args.batch_size, args.image_size, args.log_every) < 1:
         parser.error("epochs, batch size, image size and log frequency must be positive")

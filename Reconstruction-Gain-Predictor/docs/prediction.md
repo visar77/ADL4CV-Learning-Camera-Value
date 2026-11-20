@@ -6,7 +6,7 @@ Run commands from the project directory.
 
 Both inference modes report `predicted_gain` for using the candidate and `predicted_utility = max(0, predicted_gain)` for the choice between using it and keeping the base. The conversion happens in the checkpoint's target units after reversing target standardization. For example, a predicted gain of −0.3 dB has utility 0 dB. With `--rank`, equal utilities retain their input order. If all utilities are zero, keeping the base is tied for best. Training labels, regression errors, and the existing forced-capture ranking metrics use signed gains. Measured reconstruction quality can fall when FastGS uses the new view.
 
-Check `target` in the output for the units. `delta-db` is signed PSNR change in dB. `relative` uses the saved model's normalized-by-base gain. Offline prediction still includes `ground_truth_relative_gain` and `predicted_delta_db` as separate fields.
+New checkpoints default to `target: delta-db`. Their `predicted_gain` and `predicted_delta_db` both report the signed difference `candidate_psnr - base_psnr` in dB, including negative values. Checkpoints trained with `--target relative` report their native relative gain in `predicted_gain`. Offline prediction also reports `ground_truth_relative_gain` and can convert relative predictions to `predicted_delta_db` when the manifest includes the base PSNR.
 
 `gain_predictor` provides the same behavior as a Python API:
 

@@ -19,6 +19,8 @@ def report_predictions(rows, gains, rank):
     utilities = candidate_utility(gains)
     for row, gain, utility in zip(rows, gains.tolist(), utilities.tolist(), strict=True):
         row.update(predicted_gain=gain, predicted_utility=utility)
+        if row.get("target") == "delta-db":
+            row["predicted_delta_db"] = gain
     if rank:
         rows.sort(key=lambda row: row["predicted_utility"], reverse=True)
     print(json.dumps(rows, indent=2, allow_nan=False))
@@ -105,10 +107,12 @@ def main(argv=None):
             raise ValueError("--rank requires one physical context; select --scene-id and --experiment-id.")
     values = score_samples(checkpoint, model, samples, args.features, args.device, args.lvsm_checkpoint).flatten()
     rows = [{"sample": sample_key(s), "candidate": s.candidate_id,
-             "target": checkpoint["target"], "ground_truth_relative_gain": s.psnr_gain,
-             "predicted_delta_db": value if checkpoint["target"] == "delta-db" else
-                 value * abs(s.base_psnr) if s.base_psnr is not None else None}
-            for s, value in zip(samples, values.tolist())]
+             "target": checkpoint["target"], "ground_truth_relative_gain": s.psnr_gain}
+            for s in samples]
+    if checkpoint["target"] == "relative":
+        for row, sample, value in zip(rows, samples, values.tolist(), strict=True):
+            row["predicted_delta_db"] = (value * abs(sample.base_psnr)
+                                         if sample.base_psnr is not None else None)
     return report_predictions(rows, values, args.rank)
 
 

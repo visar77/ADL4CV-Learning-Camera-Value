@@ -4,10 +4,10 @@ from collections import defaultdict
 import torch
 
 from gain_predictor.data.batches import pose_features
-from gain_predictor.data.records import context_key, input_key, target_values
+from gain_predictor.data.records import DEFAULT_TARGET, context_key, input_key, target_values
 
 
-def selection_metrics(samples, predictions, target="relative"):
+def selection_metrics(samples, predictions, target=DEFAULT_TARGET):
     if not samples:
         return None
     predicted = torch.as_tensor(predictions, dtype=torch.float64).flatten()
