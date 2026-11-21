@@ -1,0 +1,12 @@
+{
+  "results-root": "../ObjaverseRenderer/results",
+  "views-root": "../ObjaverseRenderer/views",
+  "output-root": "data/processed",
+  "output-name": null,
+  "object-ids": [],
+  "metric": "PSNR",
+  "limit": null,
+  "relativize": null,
+  "upgrade": null,
+  "duplicates": "mean"
+}

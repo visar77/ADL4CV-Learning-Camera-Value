@@ -1,0 +1,62 @@
+{
+  "torch": "2.15.0+cu132",
+  "device": "cpu",
+  "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.39",
+  "gpu": null,
+  "precision": "bf16",
+  "cpu_threads": 8,
+  "image_size": 512,
+  "latent_tokens": 3072,
+  "candidate_batch_size": 1,
+  "warmup_per_case": 0,
+  "weights": "lvsm_scene_encoder_decoder_res512.pt",
+  "weight_load_seconds": 0.9990235019940883,
+  "cases": [
+    {
+      "views": 3,
+      "candidates": 1,
+      "encoder_tokens": 15360,
+      "decoder_tokens_per_candidate": 7168,
+      "trials": [
+        {
+          "encode_seconds": 19.04260082700057,
+          "decode_seconds": 4.542202274998999,
+          "total_seconds": 23.58480310199957
+        },
+        {
+          "encode_seconds": 19.624847068989766,
+          "decode_seconds": 4.4737505950033665,
+          "total_seconds": 24.098597663993132
+        }
+      ],
+      "median": {
+        "encode_seconds": 19.333723947995168,
+        "decode_seconds": 4.507976435001183,
+        "total_seconds": 23.84170038299635
+      }
+    },
+    {
+      "views": 5,
+      "candidates": 1,
+      "encoder_tokens": 23552,
+      "decoder_tokens_per_candidate": 7168,
+      "trials": [
+        {
+          "encode_seconds": 43.590734231998795,
+          "decode_seconds": 4.729348841996398,
+          "total_seconds": 48.32008307399519
+        },
+        {
+          "encode_seconds": 46.50161489500897,
+          "decode_seconds": 5.36464606699883,
+          "total_seconds": 51.8662609620078
+        }
+      ],
+      "median": {
+        "encode_seconds": 45.04617456350388,
+        "decode_seconds": 5.046997454497614,
+        "total_seconds": 50.093172018001496
+      }
+    }
+  ]
+}

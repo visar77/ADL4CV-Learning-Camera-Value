@@ -1,22 +1,27 @@
-import json
-import tempfile
-import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+import json
+import tempfile
+import unittest
 
-import torch
 from PIL import Image
+import torch
 
-from dataset import (GainSample, audit_samples, build_manifest, collate_cameras,
-                     collate_gain_samples, context_key, deduplicate_samples, load_manifest)
-from experiments import make_splits, restored_split, selection_metrics
-from features import FeatureStore, extract_features
-from geometry import apply_frame, context_frame, rays, to_opencv
-from model import FeatureBackbone, _LVSMSceneEncoder, prepare_images
-from train import parse_args, train
-from runtime import load_run, score_samples
-from verify_lvsm import reference_forward
+from gain_predictor.checkpoints import load_run
+from gain_predictor.data.batches import collate_gain_samples, prepare_images
+from gain_predictor.data.manifest import build_manifest, load_manifest
+from gain_predictor.data.records import GainSample, audit_samples, context_key, deduplicate_samples, target_values
+from gain_predictor.data.splits import make_splits, restored_split
+from gain_predictor.feature_cache import FeatureStore, extract_features
+from gain_predictor.geometry import apply_frame, context_frame, rays, to_opencv
+from gain_predictor.metrics import selection_metrics
+from gain_predictor.models.backbone import FeatureBackbone
+from gain_predictor.models.lvsm import _LVSMSceneEncoder
+from gain_predictor.scoring import score_samples
+from gain_predictor.training import train
+from tests.verify_lvsm import reference_forward
+from train import parse_args
 
 
 def example(root, context=0, candidate=0, gain=.1):
@@ -212,19 +217,30 @@ class DatasetAndSplitTests(unittest.TestCase):
 
 
 class CacheAndTrainingTests(unittest.TestCase):
+    def test_legacy_labels_with_and_without_base_psnr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sample = example(Path(directory), gain=-.15)
+            base_only = replace(sample, candidate_psnr=None)
+            relative_only = replace(base_only, base_psnr=None)
+            torch.testing.assert_close(target_values([sample, base_only], "delta-db"),
+                                       torch.tensor([[-3.], [-3.]]))
+            with self.assertRaisesRegex(ValueError, "--target relative"):
+                target_values([relative_only], "delta-db")
+            torch.testing.assert_close(target_values([relative_only], "relative"), torch.tensor([[-.15]]))
+
     def test_compare_evaluate_and_rank_cli_share_saved_splits(self):
         import contextlib
         import io
         import compare
         import evaluate
-        import inference
+        import predict
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
             root = Path(d)
-            samples = [example(root, c, q, .1*q) for c in range(5) for q in range(3)]
+            samples = [example(root, c, q, .1*(q-1)) for c in range(5) for q in range(3)]
             manifest = root/"data.jsonl"
             manifest.write_text(''.join(json.dumps(s.to_json())+'\n' for s in samples))
             output = compare.main(["--dataset", str(manifest), "--mode", "context",
-                                   "--models", "mean", "geometry", "--target", "delta-db",
+                                   "--models", "mean", "geometry",
                                    "--output-dir", str(root/"comparison")])
             report = json.loads(output.read_text())
             self.assertEqual(set(report["models"]), {"mean", "geometry"})
@@ -232,10 +248,14 @@ class CacheAndTrainingTests(unittest.TestCase):
             evaluation = evaluate.main(["--checkpoint", str(model), "--split", "test"])
             self.assertEqual(evaluation["target"], "delta-db")
             self.assertEqual(evaluation["samples"], 3)
-            ranked = inference.main(["--checkpoint", str(model), "--experiment-id", "context0", "--rank"])
+            ranked = predict.main(["--checkpoint", str(model), "--experiment-id", "context0", "--rank"])
             self.assertEqual(len(ranked), 3)
-            self.assertEqual([r["predicted_gain"] for r in ranked],
-                             sorted([r["predicted_gain"] for r in ranked], reverse=True))
+            self.assertLess(min(r["ground_truth_relative_gain"] for r in ranked), 0.)
+            for row in ranked:
+                self.assertEqual(row["target"], "delta-db")
+                self.assertEqual(row["predicted_delta_db"], row["predicted_gain"])
+            self.assertEqual([r["predicted_utility"] for r in ranked],
+                             sorted([max(0., r["predicted_gain"]) for r in ranked], reverse=True))
 
     def test_cache_reuse_invalidation_and_head_only_training(self):
         with tempfile.TemporaryDirectory() as d:
@@ -258,11 +278,13 @@ class CacheAndTrainingTests(unittest.TestCase):
                                "--mode","overfit","--epochs","150","--batch-size","6", "--learning-rate",".01",
                                "--scheduler","none","--early-stopping-patience","0", "--log-every","150",
                                "--output",str(root/"head.pt"),"--log-dir",str(root/"logs")])
-            with patch("model.LVSMFeatureBackbone.__init__", side_effect=AssertionError("Backbone instantiated")):
+            with patch("gain_predictor.models.lvsm.LVSMFeatureBackbone.__init__", side_effect=AssertionError("Backbone instantiated")):
                 train(args)
                 checkpoint, model = load_run(args.output)
                 prediction = score_samples(checkpoint, model, samples, path)
-            self.assertLess(float((prediction.flatten()-torch.tensor([s.psnr_gain for s in samples])).square().mean()), 1e-5)
+            self.assertEqual(checkpoint["target"], "delta-db")
+            expected = target_values(samples, "delta-db")
+            self.assertLess(float((prediction - expected).square().mean()), 4e-3)
             self.assertLess(args.output.stat().st_size, 100_000)
             self.assertEqual(len(restored_split(load_manifest(manifest), checkpoint, "train")), 6)
             changed = [replace(samples[0], psnr_gain=.9), *samples[1:]]
