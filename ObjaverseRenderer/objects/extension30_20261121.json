@@ -1,0 +1,362 @@
+{
+  "seed": 20261121,
+  "annotation_source": "https://huggingface.co/datasets/cindyxl/ObjaversePlusPlus/resolve/main/annotated_800k.json",
+  "annotation_sha256": "c166c93556d3b42550c048942a80d686153692196b9ea37261ed2c4c70a86669",
+  "mapping_source": "https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/gobjaverse_280k_index_to_objaverse.json",
+  "mapping_sha256": "8367944b32bba1e1971036701b04299a84bf705a3cb7045f06ee5d56a73a4c73",
+  "eligible_count": 78154,
+  "screening": {
+    "required_score": 3,
+    "accepted_styles": [
+      "realistic",
+      "cartoon",
+      "stylized"
+    ],
+    "excluded_annotations": [
+      "is_multi_object",
+      "is_scene",
+      "is_transparent",
+      "is_single_color"
+    ],
+    "face_count_range": [
+      120,
+      350000
+    ],
+    "max_glb_size_bytes": 30000000,
+    "animations_allowed": false,
+    "preview_count": 106,
+    "preview": "One 224x224 Cycles CPU view per candidate at azimuth 45 degrees and elevation approximately 23 degrees, with the standard light rig and 16 samples. Visual selection screened for intact, opaque, mostly solid objects with useful texture or shape."
+  },
+  "objects": [
+    {
+      "source_id": "86/443489",
+      "mapped_path": "000-086/b3250a196bfb4e1a8a94c80c90bd7a9c.glb",
+      "uid": "b3250a196bfb4e1a8a94c80c90bd7a9c",
+      "object_id": "Wk7a Unitblock Advanced (2)",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 493,
+      "size_bytes": 127044,
+      "sha256": "1aaca4f11566568a0dc6970483be7793cb0b0cb86e2fea33aa6d3de84320fba6"
+    },
+    {
+      "source_id": "68/354218",
+      "mapped_path": "000-068/d80c173ba2524d83b77b348b06dd1e1b.glb",
+      "uid": "d80c173ba2524d83b77b348b06dd1e1b",
+      "object_id": "Fridge",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 3356,
+      "size_bytes": 2508220,
+      "sha256": "b5d5eb6050ffa46005dfc072c5124bc61914156a060e40f98879172105898c3f"
+    },
+    {
+      "source_id": "65/338195",
+      "mapped_path": "000-065/a130f5f601ec45f2a01af1e21f8c22a5.glb",
+      "uid": "a130f5f601ec45f2a01af1e21f8c22a5",
+      "object_id": "Cabina De Grabacion",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 332,
+      "size_bytes": 26548,
+      "sha256": "b57917bf9b88c1a393c8489bfe03e0db1d4c384faccba77538a28443fe777e18"
+    },
+    {
+      "source_id": "152/774127",
+      "mapped_path": "000-152/d1f14d8c2b75474d94eb9ece1ad3ac6c.glb",
+      "uid": "d1f14d8c2b75474d94eb9ece1ad3ac6c",
+      "object_id": "Sony PlayStation 5",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 107816,
+      "size_bytes": 3750448,
+      "sha256": "999a9f0b3a5e9ad5430d85a7db9bbc15eca4ee735d471a38ce35630cededf84f"
+    },
+    {
+      "source_id": "36/193735",
+      "mapped_path": "000-036/bd24bb47309d4c46917dff5b61ec0d81.glb",
+      "uid": "bd24bb47309d4c46917dff5b61ec0d81",
+      "object_id": "The Angler Giant",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 9376,
+      "size_bytes": 6690828,
+      "sha256": "500568f25c44f579a75bbef95a674f5ba416a1cdbe0c12d2017c49a1c5a7033e"
+    },
+    {
+      "source_id": "40/214042",
+      "mapped_path": "000-040/d2134da7512c4a4ea3acb5efc038939c.glb",
+      "uid": "d2134da7512c4a4ea3acb5efc038939c",
+      "object_id": "Porsche 911 993 RWB GT2 (RAUH_Welt)",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 154236,
+      "size_bytes": 13697996,
+      "sha256": "a897a267d8dbc1b4e435b2ef88ec2278a77732e79e1ec5889e69fc0bee4ace02"
+    },
+    {
+      "source_id": "24/132831",
+      "mapped_path": "000-024/8efa91b9b83249feadb49787c1a35e80.glb",
+      "uid": "8efa91b9b83249feadb49787c1a35e80",
+      "object_id": "Lock",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 1055,
+      "size_bytes": 3246676,
+      "sha256": "f6f4b98ffccefa9ac8a84fd81b7238d4b879f1aee6ca03855eade1d499f77e01"
+    },
+    {
+      "source_id": "8/50322",
+      "mapped_path": "000-008/1052e50c722547f992f5154267255ab9.glb",
+      "uid": "1052e50c722547f992f5154267255ab9",
+      "object_id": "HCR2 Scooter",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 8616,
+      "size_bytes": 542284,
+      "sha256": "46e0e57d7dc11eedb3d31d78364bcf467df75a38fdae84428b5c0023e91b7804"
+    },
+    {
+      "source_id": "91/467914",
+      "mapped_path": "000-091/97611a53e3b846f69e0655b210f72b2f.glb",
+      "uid": "97611a53e3b846f69e0655b210f72b2f",
+      "object_id": "Hoodie",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 240326,
+      "size_bytes": 7140940,
+      "sha256": "1a51e55972c8f5d1cdc4e629cd6daa48722f330c8251373018aba1b1a9f4bb7d"
+    },
+    {
+      "source_id": "139/706113",
+      "mapped_path": "000-139/3b1a1482122e449e8d7f5ad8b9046652.glb",
+      "uid": "3b1a1482122e449e8d7f5ad8b9046652",
+      "object_id": "Dice",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 24338,
+      "size_bytes": 5285596,
+      "sha256": "418ac3ac2efcab3b829b9927d1efb7bbb3ea90fc4404441ff6471659666c3317"
+    },
+    {
+      "source_id": "6/44985",
+      "mapped_path": "000-006/ff760197d16a429eb02d1ea4a97b747f.glb",
+      "uid": "ff760197d16a429eb02d1ea4a97b747f",
+      "object_id": "American Bison Voxel",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 7372,
+      "size_bytes": 562816,
+      "sha256": "2972e0c5a53e4bc089fa067403f4f621a52f380c255e94b1d71e039df4a48024"
+    },
+    {
+      "source_id": "78/404351",
+      "mapped_path": "000-078/ddb0f639562a465b94b4af885d563cb3.glb",
+      "uid": "ddb0f639562a465b94b4af885d563cb3",
+      "object_id": "radioactive barrel",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 1240,
+      "size_bytes": 4257740,
+      "sha256": "70e950f4e58b0e3cb3bb93402a7e49e251314546bc825f86704f075565f579fd"
+    },
+    {
+      "source_id": "65/336150",
+      "mapped_path": "000-065/3cabb0c7b60c4ad4a3c51a72059f99dd.glb",
+      "uid": "3cabb0c7b60c4ad4a3c51a72059f99dd",
+      "object_id": "Calimara din ceramica",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 184961,
+      "size_bytes": 6694664,
+      "sha256": "cc4503cb8349f7f4a2bfa1deeee5c060c86a2194ed60a95c88c7c783b5f53180"
+    },
+    {
+      "source_id": "97/499960",
+      "mapped_path": "000-097/fdebdabc9fa24f518d19d1240ccba7a0.glb",
+      "uid": "fdebdabc9fa24f518d19d1240ccba7a0",
+      "object_id": "Segozancia Sp Male Crab - RapidCompact",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 25000,
+      "size_bytes": 3570120,
+      "sha256": "a36439ce7cd54951dfc77754db3e09ee119a521f03ba6a8b8ab483b7fdf12014"
+    },
+    {
+      "source_id": "156/790496",
+      "mapped_path": "000-156/19c943e409644a8281cc96f63e6743c6.glb",
+      "uid": "19c943e409644a8281cc96f63e6743c6",
+      "object_id": "Military Crate",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 2040,
+      "size_bytes": 2601824,
+      "sha256": "8c4ebca2f61338594edd0b0b1565a23698385a3bd2e040ed6398f995d83b3dbc"
+    },
+    {
+      "source_id": "109/559655",
+      "mapped_path": "000-109/ef13d0e66ae440ee9a0fd33aab9b4e7d.glb",
+      "uid": "ef13d0e66ae440ee9a0fd33aab9b4e7d",
+      "object_id": "My (Hopefully) Future Fightstick",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 7850,
+      "size_bytes": 787764,
+      "sha256": "56b570a05d16c66015eb11a265e66731dccfed9ca81f137cdbdf156bb5cb696c"
+    },
+    {
+      "source_id": "56/293231",
+      "mapped_path": "000-056/a57761a3cffc44c49c4e911cd40622cf.glb",
+      "uid": "a57761a3cffc44c49c4e911cd40622cf",
+      "object_id": "Helicoptero",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 774,
+      "size_bytes": 276192,
+      "sha256": "f0a7cd65951180c9933aaf50e889215d5e3d1facce0b87748a14a386e49ccf7d"
+    },
+    {
+      "source_id": "11/65645",
+      "mapped_path": "000-011/222a64dfd30e485cadfab49536ab2919.glb",
+      "uid": "222a64dfd30e485cadfab49536ab2919",
+      "object_id": "Coke",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 1757,
+      "size_bytes": 194440,
+      "sha256": "bda40bfb66a35eeddd5cd822bdd6eca0a8be3306fa9615673abbac65c90a6b45"
+    },
+    {
+      "source_id": "102/521428",
+      "mapped_path": "000-102/4a338ebf1d9943b5999486217a696d70.glb",
+      "uid": "4a338ebf1d9943b5999486217a696d70",
+      "object_id": "Chair",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 2992,
+      "size_bytes": 2119868,
+      "sha256": "ca6e7dfae3d08012c2450485e46add77fc98615f5a06f4f7a220e16af2adafeb"
+    },
+    {
+      "source_id": "70/361425",
+      "mapped_path": "000-070/483f27d5eeee4aa9bae6443b18e27915.glb",
+      "uid": "483f27d5eeee4aa9bae6443b18e27915",
+      "object_id": "phenom cap",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 1080,
+      "size_bytes": 723828,
+      "sha256": "5c71462a40b050bf02ecf52f6f250ab4407256eebf6b832c26f27dc1e3f20e7a"
+    },
+    {
+      "source_id": "82/421542",
+      "mapped_path": "000-082/4e174e8c317e4e0b8035bd62fd265411.glb",
+      "uid": "4e174e8c317e4e0b8035bd62fd265411",
+      "object_id": "Helmet",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 5438,
+      "size_bytes": 3696044,
+      "sha256": "ba89c724106a919399319b8cc170e1a79b00d3e35e5ce9893db4f28a332ba525"
+    },
+    {
+      "source_id": "42/220377",
+      "mapped_path": "000-042/1224899d82d947909076ee8b4ac49d44.glb",
+      "uid": "1224899d82d947909076ee8b4ac49d44",
+      "object_id": "Wo the Cat",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 1440,
+      "size_bytes": 255124,
+      "sha256": "5c04f1f252bf6b63d508fc68ec64405f7db85ba37d509ca97520adb6dbc59d59"
+    },
+    {
+      "source_id": "120/614257",
+      "mapped_path": "000-120/da038b70cead4d85b3e81bdbe318aabc.glb",
+      "uid": "da038b70cead4d85b3e81bdbe318aabc",
+      "object_id": "Firewood 2",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 124,
+      "size_bytes": 2686384,
+      "sha256": "2259ee9280242f53e0ccd900cdf69c5a410c7f7975803357a99e005bd861da3d"
+    },
+    {
+      "source_id": "46/241824",
+      "mapped_path": "000-046/5d9a14f7f50e4f979265e56467cfaea2.glb",
+      "uid": "5d9a14f7f50e4f979265e56467cfaea2",
+      "object_id": "Tabble Lp",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 290,
+      "size_bytes": 3185348,
+      "sha256": "322632249863709b8da9ce52d44ff1731bb67fe682633c7c939f32c6d9adaf9e"
+    },
+    {
+      "source_id": "152/774652",
+      "mapped_path": "000-152/ee1be438dec5482f894cf0a2a3efbc7b.glb",
+      "uid": "ee1be438dec5482f894cf0a2a3efbc7b",
+      "object_id": "Starwars Droidfighter",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 74083,
+      "size_bytes": 3832532,
+      "sha256": "8fe391136382e811d482383e0c55051b60fb90b279ba6031b366bbd921142969"
+    },
+    {
+      "source_id": "113/575394",
+      "mapped_path": "000-113/14c587b584604d76ac3707f5cf7292bc.glb",
+      "uid": "14c587b584604d76ac3707f5cf7292bc",
+      "object_id": "Vecino",
+      "score": 3,
+      "style": "cartoon",
+      "face_count": 1458,
+      "size_bytes": 289208,
+      "sha256": "b377428ee912f5e8771b3e3003f76f88ed0c0c6b8c48e6f1743c1d6965d7c3ad"
+    },
+    {
+      "source_id": "142/721734",
+      "mapped_path": "000-142/5a45aa7630304b7ebdda5a3b4821660c.glb",
+      "uid": "5a45aa7630304b7ebdda5a3b4821660c",
+      "object_id": "television",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 3254,
+      "size_bytes": 548060,
+      "sha256": "2d5aa7155fd5710205065f3e0b09b369c8bba98f74e8614bd2423c6d89f211d0"
+    },
+    {
+      "source_id": "75/387150",
+      "mapped_path": "000-075/6f633ab1e4d14b0382a626becf91a941.glb",
+      "uid": "6f633ab1e4d14b0382a626becf91a941",
+      "object_id": "simple doll",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 3520,
+      "size_bytes": 1672116,
+      "sha256": "622d614bc51f22351f65b47faebe10f4331c6824efe50700cabec50da120419c"
+    },
+    {
+      "source_id": "37/195218",
+      "mapped_path": "000-037/0a83180e31b640a39a83b0da113b00ce.glb",
+      "uid": "0a83180e31b640a39a83b0da113b00ce",
+      "object_id": "Fire Hydrant",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 8936,
+      "size_bytes": 4225216,
+      "sha256": "4bc2382b33e424f9b129021fc6ab5bbeca96be96da8aa97da60e739bc50443cc"
+    },
+    {
+      "source_id": "40/212850",
+      "mapped_path": "000-040/943019cff173428a9b2aef26ea0492b1.glb",
+      "uid": "943019cff173428a9b2aef26ea0492b1",
+      "object_id": "Po-Tato",
+      "score": 3,
+      "style": "realistic",
+      "face_count": 108940,
+      "size_bytes": 4295472,
+      "sha256": "16a1540edf34478c00c5582c27960f3865981888b16c22d713fb80c8cde99bc6"
+    }
+  ]
+}

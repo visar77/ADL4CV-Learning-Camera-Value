@@ -11,6 +11,7 @@ import subprocess
 import sys
 import traceback
 
+from object_skips import ObjectSkips
 from sampling import (
     candidate_configurations,
     fibonacci_lattice,
@@ -147,14 +148,15 @@ def load_json(path):
         return json.load(file)
 
 
-def check_prepared_run():
+def check_prepared_run(extra_objects=()):
     manifest = load_json(CONFIG["run_root"] / "run_manifest.json")
     for filename, expected in manifest["configs"].items():
         path = Path(filename)
         current = config_snapshot() if path.resolve() == CONFIG_PATH else load_json(path)
         if current != expected:
             raise SystemExit(f"Configuration changed since preparation: {filename}")
-    if discover_objects() != manifest["objects"]:
+    extras = set(extra_objects).difference(manifest["objects"])
+    if [name for name in discover_objects() if name not in extras] != manifest["objects"]:
         raise SystemExit("Object selection changed since preparation.")
     if [item["id"] for item in load_experiments()] != manifest["experiments"]:
         raise SystemExit("Experiment selection changed since preparation.")
@@ -666,14 +668,18 @@ def main(argv=None):
     if args.experiment_id is not None and args.experiment_id not in experiment_ids:
         raise ValueError(f"Unknown experiment ID: {args.experiment_id}")
     selected_ids = [args.experiment_id] if args.experiment_id is not None else experiment_ids
+    skips = ObjectSkips(CONFIG["run_root"], args, load_json, save_json)
 
     for object_id in object_ids:
+        if skips.should_skip(object_id):
+            continue
         try:
             object_dir, global_train = ensure_views(object_id, args.rerender)
             plans = plan_candidates(object_id, object_dir, global_train, experiments)
-        except Exception:
+        except Exception as error:
             if not (args.continue_on_error or args.skip_failed_object):
                 raise
+            skips.record(object_id, None, error)
             print(f"Skipping object {object_id}: failed to prepare views or cameras", file=sys.stderr)
             traceback.print_exc()
             continue
@@ -682,10 +688,11 @@ def main(argv=None):
             print(f"Running {object_id} / {experiment_id}", flush=True)
             try:
                 run_experiment(object_id, object_dir, experiment_id, base, candidates, args)
-            except Exception:
+            except Exception as error:
                 if not (args.continue_on_error or args.skip_failed_object):
                     raise
                 if args.skip_failed_object:
+                    skips.record(object_id, experiment_id, error)
                     print(
                         f"Skipping remaining work for {object_id} after failure in {experiment_id}",
                         file=sys.stderr,

@@ -5,15 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 check_scratch=0
 relocate_from=
+extend=0
 if [[ "${1:-}" == --check-scratch ]]; then
   check_scratch=1
   shift
 elif [[ "${1:-}" == --relocate-from ]]; then
   relocate_from="${2:?Usage: prepare_reconstruction.sh --relocate-from OLD_RUN_ROOT}"
   shift 2
+elif [[ "${1:-}" == --extend-to-50 ]]; then
+  extend=1
+  shift
 fi
 if (( $# )); then
-  echo "Usage: prepare_reconstruction.sh [--check-scratch | --relocate-from OLD_RUN_ROOT]" >&2
+  echo "Usage: prepare_reconstruction.sh [--extend-to-50 | --check-scratch | --relocate-from OLD_RUN_ROOT]" >&2
   echo "Set the destination run paths in ObjaverseRenderer/orchestrator_config.json." >&2
   exit 2
 fi
@@ -71,17 +75,63 @@ PY
 fi
 
 mkdir -p logs
-"$env_python" - "$relocate_from" <<'PY'
+"$env_python" - "$relocate_from" "$extend" <<'PY'
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path('ObjaverseRenderer').resolve()))
 import orchestrator
+from download_gbuffer_objaverse import GLB_BASE_URL, download_file, load_index, select_objects
+from gaussian_initialization import sha256
 
 root = orchestrator.CONFIG['run_root']
 objects_root = orchestrator.CONFIG['objects_root']
 relocate_from = sys.argv[1]
+manifest_path = root / 'run_manifest.json'
+if sys.argv[2] == '1':
+    assets = load_index('ObjaverseRenderer/objects/extension30_20261121.json')['objects']
+    names = {asset['object_id'] for asset in assets}
+    source_ids = {asset['source_id'] for asset in assets}
+    manifest = orchestrator.check_prepared_run(extra_objects=names)
+    objects = set(manifest['objects'])
+    if len(objects) == 50 and names <= objects and source_ids <= set(manifest['source_ids']):
+        print(f'The 50-object run is already prepared at {root}.')
+        raise SystemExit(0)
+    if len(objects) != 20 or len(names) != 30 or len(source_ids) != 30:
+        raise SystemExit('Expected an existing 20-object run and 30 distinct additions.')
+    if names & objects or source_ids.intersection(manifest['source_ids']):
+        raise SystemExit('The extension overlaps the existing object selection.')
+    for asset in assets:
+        path = objects_root / f"{asset['object_id']}.glb"
+        url = GLB_BASE_URL + quote(f"glbs/{asset['mapped_path']}", safe='/')
+        download_file(url, path)
+        if sha256(path) != asset['sha256']:
+            raise SystemExit(f'GLB does not match the screened asset: {path}')
+
+    skips_path = root / 'skipped_objects.json'
+    skipped = orchestrator.load_json(skips_path) if skips_path.is_file() else {}
+    for name, experiment in (
+        ('Dinavac DV-19', 'furthest_4_seed_77'),
+        ('Measuring Tape', 'furthest_14_seed_77'),
+    ):
+        receipt = orchestrator.CONFIG['results_root'] / name / experiment / 'results.json'
+        if name not in objects or not receipt.is_file():
+            continue
+        if orchestrator.load_json(receipt).get('status') == 'skipped':
+            skipped.setdefault(name, {
+                'experiment_id': experiment,
+                'reason': 'Base repeatedly failed',
+                'slurm_job_id': '3591',
+            })
+    orchestrator.save_json(skips_path, skipped)
+    manifest['objects'] = sorted(objects | names)
+    manifest['source_ids'].extend(asset['source_id'] for asset in assets)
+    orchestrator.save_json(manifest_path, manifest)
+    print(f'Prepared 50 objects at {root}.')
+    raise SystemExit(0)
+
 if not relocate_from:
     objects_root.mkdir(parents=True, exist_ok=True)
     subprocess.run([
@@ -90,12 +140,11 @@ if not relocate_from:
         '--count', '20', '--seed', '77', '--output-dir', objects_root,
     ], check=True)
 objects = orchestrator.discover_objects()
-if len(objects) != 20:
+if not relocate_from and len(objects) != 20:
     raise SystemExit(f'Expected exactly 20 GLBs in {objects_root}, found {len(objects)}')
 experiments = orchestrator.load_experiments()
 
 config_path = Path('ObjaverseRenderer/orchestrator_config.json')
-manifest_path = root / 'run_manifest.json'
 experiments_ids = [experiment['id'] for experiment in experiments]
 
 if relocate_from:
@@ -138,8 +187,6 @@ if relocate_from:
     orchestrator.save_json(manifest_path, manifest)
     print(f'Relocated run to {root}.')
     raise SystemExit(0)
-
-from download_gbuffer_objaverse import load_index, select_objects
 
 # Freeze the selection and settings so submission needs no shell variables.
 config_files = [Path('ObjaverseRenderer/training_config.json'), Path('ObjaverseRenderer/config.json')]

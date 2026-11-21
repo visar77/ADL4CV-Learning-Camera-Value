@@ -321,8 +321,10 @@ configured count.
 After retries are exhausted, the job is recorded as failed in its
 `results.json`. Use `--continue-on-error` to proceed to other reconstructions
 or `--skip-failed-object` to skip the object's remaining work and proceed to
-the next object. A later run retries failed reconstructions and evaluations,
-with per-job `status` and `evaluation_status` showing their outcomes.
+the next object. A full prepared batch with `--skip-failed-object` saves and
+reuses exclusions in `skipped_objects.json`. Remove an entry while the batch
+is stopped to include that object again. Individual outcomes are recorded
+with `status` and `evaluation_status` in `results.json`.
 Candidate-base mode trains/reuses the regular `base/` reconstruction, then
 adapts candidates for 3k steps from its PLY. If `base/` is missing, it is trained
 first; a candidate-only run does not retrain an existing base. If the required
