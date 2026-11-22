@@ -1,6 +1,5 @@
 """Prepare the pipeline demo's initial point cloud."""
 
-
 def prepare_points(object_dir, metadata, run_root):
     import numpy as np
     from plyfile import PlyData, PlyElement
