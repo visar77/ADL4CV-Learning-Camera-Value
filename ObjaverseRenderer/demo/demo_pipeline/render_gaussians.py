@@ -20,6 +20,8 @@ from scene.gaussian_model import GaussianModel
 from utils.graphics_utils import getProjectionMatrix
 
 WIDTH, HEIGHT = 1600, 1200
+# Blender's 0.8-strength world background under the Standard view transform.
+OVERVIEW_BACKGROUND = 231 / 255
 
 
 def camera_from_blender(metadata, matrix, width, height, width_in_radii):
@@ -78,8 +80,9 @@ def main():
     pipe = SimpleNamespace(debug=False, compute_cov3D_python=False, convert_SHs_python=False)
     white = torch.ones(3, device="cuda")
     black = torch.zeros(3, device="cuda")
+    background = torch.full((3,), OVERVIEW_BACKGROUND, device="cuda")
     with torch.no_grad():
-        close = render_fastgs(overview_camera(metadata, 3.4), gaussians, pipe, white, 0.5)["render"]
+        close = render_fastgs(overview_camera(metadata, 3.4), gaussians, pipe, background, 0.5)["render"]
         wide_camera = overview_camera(metadata, 8.5)
         rgba = render_transparent(wide_camera, gaussians, pipe, black, white)
     for image, path in ((close, args.output), (rgba, args.transparent_output)):

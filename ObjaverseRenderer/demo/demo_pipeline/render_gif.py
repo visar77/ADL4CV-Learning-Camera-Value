@@ -59,7 +59,9 @@ def render_gif(args):
     import numpy as np
     import torch
     from PIL import Image
-    from render_gaussians import camera_from_blender, load_gaussians, render_fastgs, render_transparent
+    from render_gaussians import (
+        OVERVIEW_BACKGROUND, camera_from_blender, load_gaussians, render_fastgs, render_transparent,
+    )
 
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="pipeline-gif-", dir=args.output.parent) as temp_dir:
@@ -74,7 +76,8 @@ def render_gif(args):
             raise RuntimeError(f"Expected {FRAMES} camera poses, got {len(poses)}")
         gaussians = load_gaussians(args.checkpoint)
         pipe = SimpleNamespace(debug=False, compute_cov3D_python=False, convert_SHs_python=False)
-        background = torch.ones(3, device="cuda")
+        background = torch.full((3,), OVERVIEW_BACKGROUND, device="cuda")
+        white = torch.ones(3, device="cuda") if args.transparent_frames else None
         black = torch.zeros(3, device="cuda") if args.transparent_frames else None
         frames = []
         with torch.no_grad():
@@ -85,7 +88,7 @@ def render_gif(args):
                 frames.append(Image.fromarray(pixels).quantize(colors=256))
                 if args.transparent_frames:
                     camera = camera_from_blender(metadata, pose, WIDTH, HEIGHT, 8.5)
-                    image = render_transparent(camera, gaussians, pipe, black, background)
+                    image = render_transparent(camera, gaussians, pipe, black, white)
                     pixels = (image.clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255 + 0.5).astype(np.uint8)
                     Image.fromarray(pixels).save(args.transparent_frames / f"{index:03d}.png")
         save_gif(frames, args.output)

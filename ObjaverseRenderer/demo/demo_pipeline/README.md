@@ -45,6 +45,8 @@ The demo also creates `pipeline_reconstruct_base.gif` and
 `pipeline_reconstruct_candidate.gif`: 60-frame, looping FastGS turntables using
 Blender camera poses at the overview's fixed elevation and angle. The GIFs use
 the same candidate as the PNGs and are regenerated on each run.
+The standalone FastGS PNGs and GIFs use an off-white background matching the
+Blender overviews.
 `pipeline_reconstruct_evaluate_base.gif` and
 `pipeline_reconstruct_evaluate_candidate.gif` also show the held-out camera
 geometry and evaluated renders throughout the turntable. Like the evaluation
