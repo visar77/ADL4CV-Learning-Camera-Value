@@ -1,0 +1,24 @@
+{
+  "object_id": "vespa_HP_street_demo",
+  "experiment_id": "street_demo",
+  "source_scene": "assets/vespa_street.blend",
+  "target_root": "Sketchfab_model",
+  "base_views": [
+    {"id": "train-01", "position": [-2.5, 1.1, 2.1], "rotation_degrees": [60.21, 0, -113.75]},
+    {"id": "train-02", "position": [-2.05, -1.45, 1.3], "rotation_degrees": [73.09, 0, -54.73]},
+    {"id": "train-03", "position": [2.15, -1.2, 1.45], "rotation_degrees": [69.65, 0, 60.83]},
+    {"id": "train-04", "position": [2.3, 1.2, 2.0], "rotation_degrees": [60.57, 0, 117.55]}
+  ],
+  "candidate_views": [
+    {"id": "candidate-01", "position": [-1.26, 1.54, 1.38], "rotation_degrees": [65, 0, -146]},
+    {"id": "candidate-02", "position": [0.1, 2.9, 2.9], "rotation_degrees": [50.84, 0, 178.03]}
+  ],
+  "overview": {"position": [-0.13, -5, 1.75], "rotation_degrees": [76, 0,0], "lens_mm": 20},
+  "test_views": [
+    {"id": "east", "position": [4.0, 0, 1.4], "target": [0, 0, 0.65]},
+    {"id": "west", "position": [-4.0, 0, 1.4], "target": [0, 0, 0.65]},
+    {"id": "north", "position": [0, 3.0, 1.4], "target": [0, 0, 0.65]},
+    {"id": "south", "position": [0, -4.0, 1.4], "target": [0, 0, 0.65]},
+    {"id": "up", "position": [0, 0, 4.7], "target": [0, 0, 0.65]}
+  ]
+}
