@@ -1,11 +1,11 @@
 {
-  "run_id": "random_3_seed_77_40k_4k",
+  "run_id": "random_10_seed_77_30k_3k",
   "lattice_size": 20,
-  "experiment_id": "random_3_seed_77",
+  "experiment_id": "random_10_seed_77",
   "candidate_ids": ["blindspot-1", "random-1", "random-2"],
   "training": {
-    "base_iterations": 40000,
-    "candidate_iterations": 4000,
+    "base_iterations": 30000,
+    "candidate_iterations": 3000,
     "densification_interval": 500,
     "grad_abs_thresh": 0.0012,
     "adaptation_lr_scale": 0.1,
