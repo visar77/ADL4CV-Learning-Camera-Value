@@ -8,6 +8,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.text import Text
 from matplotlib.ticker import MaxNLocator, StrMethodFormatter
 import numpy as np
 
@@ -28,10 +29,12 @@ def figure(title, subtitle):
     return fig, ax
 
 
-def save(fig, output, name):
-    for extension in ("png", "pdf"):
-        fig.savefig(output / f"{name}.{extension}", dpi=220, facecolor="white")
-    plt.close(fig)
+def save(fig, output, name, *, formats=("png", "pdf"), bbox_inches=None, close=True):
+    for extension in formats:
+        fig.savefig(output / f"{name}.{extension}", dpi=220, facecolor="white",
+                    bbox_inches=bbox_inches)
+    if close:
+        plt.close(fig)
 
 
 def histogram(ax, values, color, label):
@@ -93,9 +96,9 @@ def main():
     parser.add_argument("--output", type=Path, default=HERE / "output")
     args = parser.parse_args()
     with args.input.open(encoding="utf-8", newline="") as stream:
-        rows = list(csv.DictReader(stream))
+        rows = [row for row in csv.DictReader(stream) if row["object"] != "Dinavac DV-19"]
     if not rows:
-        parser.error("The input CSV has no candidate actions.")
+        parser.error("No candidate actions remain after excluding Dinavac DV-19.")
     if len({(r["base_iterations"], r["candidate_iterations"]) for r in rows}) != 1:
         parser.error("Use one reconstruction iteration budget per input CSV.")
     gains = np.array([[float(r[f"gain_{m}"]) for m in COLORS] for r in rows])
@@ -123,11 +126,11 @@ def main():
         ax.set_axisbelow(True)
         ax.tick_params(axis="both", length=0, pad=8)
     overview.subplots_adjust(left=.15, right=.98, top=.85, bottom=.09, wspace=.14, hspace=.27)
-    overview.text(.04, .95, "Reconstruction gains", fontsize=25, weight="bold", color="#203344")
-    overview.text(.04, .905, f"{len(rows):,} unique candidate views · {len(objects)} objects · positive gain = improvement",
-                  fontsize=12, color="#65717C")
-    overview.text(.04, .025, "Boxes: median and middle 50% · whiskers: 1.5 × IQR · dots: outliers",
-                  fontsize=10, color="#65717C")
+    title = overview.text(.04, .95, "Reconstruction gains", fontsize=25, weight="bold", color="#203344")
+    subtitle = overview.text(
+        .04, .905, f"{len(rows):,} unique candidate views · {len(objects)} objects · positive gain = improvement",
+        fontsize=12, color="#65717C",
+    )
     for column, (metric, values, color, filename) in enumerate(panels):
         label = f"{metric} gain" + (" (dB)" if metric == "PSNR" else "")
         formula = "Base − candidate" if metric == "LPIPS" else "Candidate − base"
@@ -153,14 +156,23 @@ def main():
             axes[0, column].set_ylabel("")
             axes[1, column].tick_params(labelleft=False)
     axes[0, 0].set_ylim(0, max(np.histogram(values, bins=100)[0].max() for _, values, _, _ in panels) * 1.12)
-    save(overview, args.output, "overview")
+    save(overview, args.output, "overview", formats=("pdf", "svg"), close=False)
+    title.remove()
+    subtitle.remove()
+    overview.subplots_adjust(left=.16, top=.93, bottom=.115)
+    for label in overview.findobj(match=Text):
+        label.set_fontsize(label.get_fontsize() * 1.4)
+    save(overview, args.output, "overview", formats=("png",))
 
     rho = spearman(np.column_stack([values for _, values, _, _ in panels]))
     fig, ax = figure("Gain metric correlations",
                      f"Spearman rank correlation · {len(rows):,} unique candidate views")
     fig.subplots_adjust(left=.23, right=.86, bottom=.22)
     masked = np.ma.masked_where(np.triu(np.ones(rho.shape, dtype=bool), k=1), rho)
-    im = ax.imshow(masked, cmap="RdBu", vmin=-1, vmax=1)
+    edges = np.arange(len(panels) + 1) - .5
+    mesh = ax.pcolormesh(edges, edges, masked, cmap="RdBu", vmin=-1, vmax=1)
+    ax.set_aspect("equal")
+    ax.invert_yaxis()
     names = ["PSNR gain", "Relative\nPSNR gain", "SSIM gain", "LPIPS gain"]
     ax.set_xticks(range(len(panels)), names)
     ax.set_yticks(range(len(panels)), names)
@@ -169,10 +181,13 @@ def main():
             value = rho[i, j]
             ax.text(j, i, f"{value:.2f}" if np.isfinite(value) else "n/a", ha="center", va="center",
                     fontsize=19, color="white" if abs(value) > .65 else "#203344")
-    fig.colorbar(im, ax=ax, fraction=.05, pad=.07, ticks=[-1, -.5, 0, .5, 1]).set_label("Spearman ρ")
+    fig.colorbar(mesh, ax=ax, fraction=.05, pad=.07, ticks=[-1, -.5, 0, .5, 1]).set_label("Spearman ρ")
     fig.text(.12, .075, "Pooled across objects and experiments", fontsize=10, color="#65717C")
-    save(fig, args.output, "correlations")
-    print(f"Saved ten figures as PNG and PDF in {args.output.resolve()}")
+    text_left = ax.get_position().x0
+    for label in fig.texts:
+        label.set_x(text_left)
+    save(fig, args.output, "correlations", bbox_inches="tight")
+    print(f"Saved ten figures as PNG and PDF, plus overview.svg, in {args.output.resolve()}")
 
 
 if __name__ == "__main__":
