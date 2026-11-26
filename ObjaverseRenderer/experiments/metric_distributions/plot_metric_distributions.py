@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 r"""Plot saved reconstruction metrics and signed, absolute gains; no GPU needed.
 
-Example (from the workspace root):
-    python3 ObjaverseRenderer/experiments/metric_distributions/plot_metric_distributions.py \
-        four_objects_views_results_reconstructions six_objects_views_results_reconstructions
+Run with the adjacent config.json, or select another with --config.
 
 Requires NumPy and Matplotlib. Inputs are orchestrator result roots or exported
 bundles containing results/<object>/<experiment>/results.json. Reconstruction-only
@@ -59,18 +57,25 @@ def discover(inputs):
     return sorted(files), expected
 
 
-def load_data(inputs):
+def load_data(inputs, objects=None):
     files, expected = discover(inputs)
+    selected = set(objects) if objects is not None else None
+    available = {obj for obj, _ in expected}
+    if selected is not None:
+        expected = {context for context in expected if context[0] in selected}
     observations, bases, sources = [], [], []
     seen_contexts = set()
     missing_reasons = {}
     excluded = defaultdict(int)
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if "reconstructions" not in data:
-            raise ValueError(f"{path}: expected orchestrator results with reconstructions")
         obj = data.get("object_id", path.parent.parent.name)
         exp = data.get("experiment_id", path.parent.name)
+        available.add(obj)
+        if selected is not None and obj not in selected:
+            continue
+        if "reconstructions" not in data:
+            raise ValueError(f"{path}: expected orchestrator results with reconstructions")
         context = (obj, exp)
         if context in seen_contexts:
             raise ValueError(f"Repeated context {context} in inputs. Supply each experimental run separately.")
@@ -115,6 +120,8 @@ def load_data(inputs):
                 row[f"base_{metric}"] = base[metric]
                 row[f"gain_{metric}"] = (values[metric] - base[metric]) * (-1 if metric == "LPIPS" else 1)
             observations.append(row)
+    if selected is not None and selected - available:
+        raise ValueError(f"Objects not found in inputs: {', '.join(sorted(selected - available))}")
     # Repeated training of one action contributes one mean, retaining all raw
     # observations and provenance separately. Never combine different budgets.
     grouped = defaultdict(list)
@@ -409,26 +416,63 @@ No confidence intervals or independent-sample claims are made.</p>
     (output / "index.html").write_text(document, encoding="utf-8")
 
 
+def load_config(path):
+    with path.open(encoding="utf-8") as stream:
+        config = json.load(stream)
+    if not isinstance(config, dict):
+        raise ValueError("Config must be a JSON object.")
+    required = {"inputs", "objects", "output", "output_name", "formats"}
+    missing = required - config.keys()
+    extra = config.keys() - required
+    if missing or extra:
+        raise ValueError(f"Config keys mismatch; missing: {sorted(missing)}, unknown: {sorted(extra)}")
+    return config
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("inputs", nargs="+", type=Path, help="Result roots, exported bundles, or experiment results.json files")
-    parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parent / "output",
-                        help="Output directory (default: output/ beside this script, independent of working directory)")
-    parser.add_argument("--formats", nargs="+", choices=("png", "pdf", "svg"), default=["png", "pdf"],
+    parser.add_argument("inputs", nargs="*", type=Path, help="Override configured result roots or results.json files")
+    parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parent / "config.json",
+                        help="JSON configuration file")
+    parser.add_argument("--objects", nargs="+", help="Override the configured object selection")
+    parser.add_argument("--output", type=Path, help="Override the configured output parent directory")
+    parser.add_argument("--output-name", help="Override the configured output directory name")
+    parser.add_argument("--formats", nargs="+", choices=("png", "pdf", "svg"),
                         help="Plot formats; PNG is always included for the HTML report")
     args = parser.parse_args(argv)
     try:
-        actions, observations, bases, coverage, sources, excluded = load_data(args.inputs)
+        config_path = args.config.expanduser().resolve()
+        config = load_config(config_path)
+        inputs = config["inputs"]
+        if not isinstance(inputs, list) or not inputs or any(not isinstance(p, str) or not p.strip() for p in inputs):
+            raise ValueError("Config inputs must be a nonempty list of paths.")
+        objects = args.objects if args.objects is not None else config["objects"]
+        if objects is not None and (not isinstance(objects, list) or not objects
+                                    or any(not isinstance(obj, str) or not obj.strip() for obj in objects)):
+            raise ValueError("Objects must be null (all objects) or a nonempty list of object names.")
+        output_setting = config["output"]
+        if not isinstance(output_setting, str) or not output_setting.strip():
+            raise ValueError("Config output must be a nonempty path.")
+        name = args.output_name if args.output_name is not None else config["output_name"]
+        if not isinstance(name, str) or not name.strip() or name in (".", "..") or "/" in name or "\\" in name:
+            raise ValueError("Output name must be a nonempty directory name, not a path.")
+        formats = args.formats if args.formats is not None else config["formats"]
+        if (not isinstance(formats, list) or not formats
+                or any(not isinstance(fmt, str) or fmt not in ("png", "pdf", "svg") for fmt in formats)):
+            raise ValueError("Formats must be a nonempty list containing png, pdf, or svg.")
+        input_paths = args.inputs or [config_path.parent / Path(p).expanduser() for p in inputs]
+        actions, observations, bases, coverage, sources, excluded = load_data(input_paths, objects)
         if not actions:
             raise ValueError("No candidate metrics found. Supply orchestrator evaluation results.json files; images/training logs alone are insufficient.")
         protocols = {(r["base_iterations"], r["candidate_iterations"]) for r in actions}
         if len(protocols) != 1:
             raise ValueError("Multiple iteration budgets found. Plot each budget separately rather than pooling them.")
-        output = args.output.expanduser().resolve()
+        output_root = args.output if args.output is not None else config_path.parent / Path(output_setting).expanduser()
+        output = (output_root.expanduser() / name).resolve()
         output.mkdir(parents=True, exist_ok=True)
         report(output, actions, observations, bases, coverage, sources, excluded,
-               list(dict.fromkeys(["png", *args.formats])))
-    except (ValueError, KeyError, TypeError) as error:
+               list(dict.fromkeys(["png", *formats])))
+    except (ValueError, KeyError, TypeError, OSError) as error:
         parser.error(str(error))
     print(f"Saved {len(actions)} actions ({len(observations)} observations), {len(bases)} bases: {output / 'index.html'}")
     missing = sum(not r["has_candidate_metrics"] for r in coverage)

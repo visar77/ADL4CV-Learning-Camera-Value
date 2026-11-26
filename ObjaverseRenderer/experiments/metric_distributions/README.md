@@ -4,18 +4,35 @@ This experiment keeps its script, tests, documentation, and generated outputs
 in this folder. It reads existing result bundles without changing them or
 running reconstruction/evaluation. Requires NumPy and Matplotlib.
 
-From the workspace root:
+Run with the included [config.json](config.json):
+
+```bash
+python3 ObjaverseRenderer/experiments/metric_distributions/plot_metric_distributions.py
+```
+
+The config defaults to reading `../../colmap/results` and selecting all objects.
+`objects: null` selects all objects; to select a subset, use exact object IDs,
+for example `"objects": ["vespa_HP", "personaje_vr"]`. Unknown names are errors.
+
+`output` is the parent directory and `output_name` is the name of the report
+subdirectory. The default report is `output/colmap/index.html`; change
+`output_name` for each selection to keep reports separate. Reusing the same
+name overwrites report files. `formats` selects the plot formats; PNG is always
+included for the HTML report.
+
+Config paths are relative to the config file, regardless of the working directory.
+Use `--config path/to/other.json` for another config with the same keys. Positional
+input paths and `--objects`, `--output`, `--output-name`, and `--formats` override
+their config values; command-line paths are relative to the working directory.
+For example:
 
 ```bash
 python3 ObjaverseRenderer/experiments/metric_distributions/plot_metric_distributions.py \
-  four_objects_views_results_reconstructions \
-  six_objects_views_results_reconstructions
+  --objects vespa_HP personaje_vr --output-name two_objects
 ```
 
-The default output is always [output/](output/), beside the script, regardless
-of the working directory. Open [output/index.html](output/index.html).
-`--output` explicitly overrides that location. Generated output is Git-ignored;
-copy it explicitly when transferring the experiment's saved results.
+Generated reports are not source data; copy them explicitly when transferring
+the experiment's saved results.
 
 The six figures are exported as PNG/PDF:
 
@@ -26,7 +43,7 @@ The six figures are exported as PNG/PDF:
 - Per-object/per-experiment fractions of candidates that improve each metric.
 - Pooled Spearman and within-context percentile-rank correlations.
 
-`--formats png pdf svg` also exports SVG. All tails remain visible. Boxplots
+Setting `"formats": ["png", "pdf", "svg"]` also exports SVG. All tails remain visible. Boxplots
 show the median and interquartile range, 5th–95th percentile whiskers, and all
 candidate actions as dots. Orange diamonds show base medians.
 
@@ -38,7 +55,7 @@ equal weight; base metrics are stored once per context.
 
 Redundancy controls are excluded. Repeated reconstructions of the same physical
 camera action within a context, budget, and evaluator are averaged. Every raw
-observation and its provenance remains in `output/observations.csv`. Other
+observation and its provenance remains in the report's `observations.csv`. Other
 exports are `actions.csv`, `bases.csv`, `coverage.csv`, and `summary.json`, with
 quantiles, sign counts, input hashes, evaluator hashes, and coverage.
 
@@ -53,7 +70,7 @@ of the same context in separate invocations.
 
 ## Current data and missing contexts
 
-The 2026-11-18 report contains ten objects, 910 unique candidate actions from
+The earlier 2026-11-18 report contains ten objects, 910 unique candidate actions from
 920 observations, and 92 completed contexts. Eight Dinavac DV-19 contexts have
 no candidate metrics:
 
