@@ -1,0 +1,7 @@
+{
+  "inputs": ["../../results"],
+  "objects": ["Crate", "Emo dream pony", "Goldman BEAR", "HW 9", "personaje_vr", "Scarab", "Sci-fi _ Retro Future Car", "vespa_HP", "Wood Box"],
+  "output": "output",
+  "output_name": "random_init",
+  "formats": ["png", "pdf"]
+}
